@@ -13,6 +13,7 @@ module Ui.Badge exposing
     , withDescription
     , withIcon
     , withTestId
+    , withUrl
     )
 
 {-| Opaque, so no caller can reach the class string: a badge that handed out its
@@ -34,13 +35,14 @@ type Badge msg
         , description : Maybe String
         , icon : Maybe Icon.Icon
         , action : Maybe msg
+        , url : Maybe String
         , testId : Maybe String
         }
 
 
 badge : String -> String -> Badge msg
 badge modifier label =
-    Badge { modifier = modifier, label = label, description = Nothing, icon = Nothing, action = Nothing, testId = Nothing }
+    Badge { modifier = modifier, label = label, description = Nothing, icon = Nothing, action = Nothing, url = Nothing, testId = Nothing }
 
 
 neutral : String -> Badge msg
@@ -118,12 +120,27 @@ label and the description together.
 
 It is for a badge whose whole meaning is that something can be done about it. A
 badge that only reports a state has nothing to press and takes none of this; one
-that goes somewhere is `toLink`, because navigation is a link.
+that goes somewhere is `withUrl` (or `toLink`), because navigation is a link.
 
 -}
 withAction : msg -> Badge msg -> Badge msg
 withAction msg (Badge config) =
     Badge { config | action = Just msg }
+
+
+{-| Somewhere the badge goes — "update available" to the import of the newer
+version. Drawn as a real link, so it is focusable and announced as one, named by
+the label and the description together, with an underline on hover to say it can
+be followed.
+
+For a badge handed on as data, a row's badges in a listing, which `toHtml`
+draws; a badge drawn in place can say the same with `toLink`. A badge goes
+somewhere or does something, not both: an action, if it has one, wins.
+
+-}
+withUrl : String -> Badge msg -> Badge msg
+withUrl url (Badge config) =
+    Badge { config | url = Just url }
 
 
 {-| A picture before the label — a tick on "Resolved".
@@ -146,17 +163,21 @@ withTestId testId (Badge config) =
 
 
 {-| The badge as it usually is: a word about the thing beside it, and nothing to
-do. A badge given something to do (`withAction`) is drawn as the button it is.
+do. A badge given something to do (`withAction`) is drawn as the button it is,
+one given somewhere to go (`withUrl`) as the link it is.
 -}
 toHtml : Badge msg -> Html msg
 toHtml (Badge config) =
-    case config.action of
-        Just msg ->
+    case ( config.action, config.url ) of
+        ( Just msg, _ ) ->
             view button
                 [ type_ "button", class "ui-badge--action", onClick msg ]
                 (Badge config)
 
-        Nothing ->
+        ( Nothing, Just url ) ->
+            view a [ href url, class "ui-badge--link" ] (Badge config)
+
+        ( Nothing, Nothing ) ->
             view span [] (Badge config)
 
 
@@ -167,7 +188,7 @@ it is, with an underline on hover to say it can be followed.
 -}
 toLink : String -> Badge msg -> Html msg
 toLink url =
-    view a [ href url, class "ui-badge--link" ]
+    toHtml << withUrl url
 
 
 view : (List (Html.Attribute msg) -> List (Html msg) -> Html msg) -> List (Html.Attribute msg) -> Badge msg -> Html msg

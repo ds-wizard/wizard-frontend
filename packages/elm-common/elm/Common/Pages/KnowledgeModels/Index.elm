@@ -279,31 +279,13 @@ listingItem policy appState kmPackage =
                 , badgeIf (kmPackage.phase == KnowledgeModelPackagePhase.Deprecated) (Badge.withTestId "listing-item_badge_deprecated" (Badge.danger (gettext "deprecated" appState.locale)))
                 , badgeIf kmPackage.public (Badge.withTestId "listing-item_badge_public" (Badge.info (gettext "public" appState.locale)))
                 , Maybe.map RowBadge.badge (policy.badge kmPackage.workspaceUuid)
+                , updateAvailableBadge appState kmPackage
                 ]
-
-        outdatedFragment =
-            if KnowledgeModelPackage.isOutdated kmPackage then
-                let
-                    kmPackageId =
-                        Maybe.map ((++) (kmPackage.id ++ ":") << Version.toString) kmPackage.remoteLatestVersion
-                in
-                [ Link.link
-                    { label = gettext "update available" appState.locale
-                    , url = Routes.toUrl appState (Routes.knowledgeModelsImport kmPackageId)
-                    }
-                    |> Link.withTestId "listing-item_link_update-available"
-                    |> Link.toHtml
-                ]
-
-            else
-                []
     in
     { row
         | icon = Just (ItemIcon.toHtml (UserAvatar.item kmPackage.name Nothing))
         , badges = badges
-        , fragments =
-            Text.code (KnowledgeModelUtils.getPackageIdWithoutVersion kmPackage)
-                :: outdatedFragment
+        , fragments = [ Text.code (KnowledgeModelUtils.getPackageIdWithoutVersion kmPackage) ]
         , description = kmPackage.description
         , timestamp = Just (Timestamp.created appState kmPackage.createdAt)
         , actions =
@@ -318,6 +300,31 @@ listingItem policy appState kmPackage =
                 }
                 kmPackage
     }
+
+
+{-| "update available", when the registry has a newer version: a link to its
+import where knowledge models can be imported, a plain badge otherwise.
+-}
+updateAvailableBadge : AppState -> KnowledgeModelPackage -> Maybe (Badge.Badge msg)
+updateAvailableBadge appState kmPackage =
+    case ( kmPackage.remoteLatestVersion, KnowledgeModelPackage.isOutdated kmPackage ) of
+        ( Just remoteLatestVersion, True ) ->
+            let
+                withImport =
+                    if Feature.knowledgeModelsImport appState then
+                        Badge.withUrl (Routes.toUrl appState (Routes.knowledgeModelsImport (Just (kmPackage.id ++ ":" ++ Version.toString remoteLatestVersion))))
+
+                    else
+                        identity
+            in
+            Badge.warning (gettext "update available" appState.locale)
+                |> Badge.withDescription (String.format (gettext "There is a newer version (%s) available." appState.locale) [ Version.toString remoteLatestVersion ])
+                |> Badge.withTestId "listing-item_badge_update-available"
+                |> withImport
+                |> Just
+
+        _ ->
+            Nothing
 
 
 badgeIf : Bool -> Badge.Badge msg -> Maybe (Badge.Badge msg)

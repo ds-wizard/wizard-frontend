@@ -317,42 +317,40 @@ listingBadges policy appState documentTemplate =
           else
             Nothing
         , Maybe.map RowBadge.badge (policy.badge documentTemplate.workspaceUuid)
-        , if DocumentTemplate.isOutdated documentTemplate then
-            Just (Badge.withTestId "listing-item_badge_update-available" (Badge.warning (gettext "update available" appState.locale)))
-
-          else
-            Nothing
+        , updateAvailableBadge appState documentTemplate
         ]
+
+
+{-| "update available", when the registry has a newer version: a link to its
+import where document templates can be imported, a plain badge otherwise.
+-}
+updateAvailableBadge : AppState -> DocumentTemplate -> Maybe (Badge.Badge msg)
+updateAvailableBadge appState documentTemplate =
+    case ( documentTemplate.remoteLatestVersion, DocumentTemplate.isOutdated documentTemplate ) of
+        ( Just remoteLatestVersion, True ) ->
+            let
+                withImport =
+                    if Feature.documentTemplatesImport appState then
+                        Badge.withUrl (Routes.toUrl appState (Routes.documentTemplatesImport (Just (documentTemplate.id ++ ":" ++ Version.toString remoteLatestVersion))))
+
+                    else
+                        identity
+            in
+            Badge.warning (gettext "update available" appState.locale)
+                |> Badge.withDescription (String.format (gettext "There is a newer version (%s) available." appState.locale) [ Version.toString remoteLatestVersion ])
+                |> Badge.withTestId "listing-item_badge_update-available"
+                |> withImport
+                |> Just
+
+        _ ->
+            Nothing
 
 
 listingFragments : AppState -> DocumentTemplate -> List (Html Msg)
 listingFragments appState documentTemplate =
-    let
-        -- The "update available" badge is not a link, so the link to the
-        -- import of the newer version is here.
-        outdatedFragment =
-            if DocumentTemplate.isOutdated documentTemplate && Feature.documentTemplatesImport appState then
-                let
-                    documentTemplateId =
-                        Maybe.map
-                            ((++) (documentTemplate.id ++ ":") << Version.toString)
-                            documentTemplate.remoteLatestVersion
-                in
-                [ Link.link
-                    { label = gettext "Import" appState.locale
-                    , url = Routes.toUrl appState (Routes.documentTemplatesImport documentTemplateId)
-                    }
-                    |> Link.withIcon (Icon.solid "fa-cloud-arrow-down")
-                    |> Link.toHtml
-                ]
-
-            else
-                []
-    in
-    outdatedFragment
-        ++ [ Text.code (DocumentTemplateUtils.getIdWithoutVersion documentTemplate)
-           , Layout.inline
-                [ Icon.toHtml (Icon.labeled (gettext "Language" appState.locale) (Icon.solid "fa-language"))
-                , text documentTemplate.language
-                ]
-           ]
+    [ Text.code (DocumentTemplateUtils.getIdWithoutVersion documentTemplate)
+    , Layout.inline
+        [ Icon.toHtml (Icon.labeled (gettext "Language" appState.locale) (Icon.solid "fa-language"))
+        , text documentTemplate.language
+        ]
+    ]
