@@ -29,8 +29,8 @@ validation : Validation FormError DocumentTemplateFormatDraft
 validation =
     V.succeed DocumentTemplateFormatDraft
         |> V.andMap (V.field "uuid" V.uuid)
-        |> V.andMap (V.field "name" V.string)
-        |> V.andMap (V.field "icon" V.string)
+        |> V.andMap (V.field "name" V.optionalString)
+        |> V.andMap (V.field "icon" V.optionalString)
         |> V.andMap (V.field "steps" (V.list DocumentTemplateFormatStep.validation))
 
 

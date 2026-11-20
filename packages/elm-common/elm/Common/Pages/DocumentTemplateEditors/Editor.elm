@@ -52,6 +52,7 @@ import Common.Api.Models.ProjectSuggestion exposing (ProjectSuggestion)
 import Common.Api.Models.UrlResponse exposing (UrlResponse)
 import Common.Api.Prefabs as PrefabsApi
 import Common.Api.Projects as ProjectsApi
+import Common.Api.ServerError as ServerError
 import Common.Components.ConfirmModal as ConfirmModal
 import Common.Components.DetailPage as DetailPage
 import Common.Components.DocumentPreviewError as DocumentPreviewError
@@ -63,6 +64,7 @@ import Common.Components.TypeHint as TypeHint
 import Common.Components.UiWords as UiWords
 import Common.Data.AppState as AppState exposing (AppState)
 import Common.Data.Feature as Feature
+import Common.Data.Forms.DocumentTemplateDraftEditForm as DocumentTemplateDraftEditForm exposing (DocumentTemplateDraftEditForm)
 import Common.Data.GuideLinks as GuideLinks
 import Common.Data.NotFound as NotFound
 import Common.Data.PaginationQueryFilters as PaginationQueryFilters
@@ -75,9 +77,13 @@ import Common.Ports.Dom as Dom
 import Common.Ports.Window as Window
 import Common.Routes as Routes
 import Common.Utils.ContentType as ContentType
+import Common.Utils.Form as FormUtils
+import Common.Utils.Form.FormError exposing (FormError)
 import Common.Utils.RequestHelpers as RequestHelpers
 import Dict exposing (Dict)
 import File
+import Form exposing (Form)
+import Form.Field
 import Gettext exposing (gettext)
 import Html exposing (Html, button, div, iframe, img, span, strong, text)
 import Html.Attributes exposing (alt, attribute, class, classList, src, title, type_)
@@ -170,9 +176,12 @@ type alias Model =
     -- toolbar rather than a column beside the files.
     , navOverlayOpen : Bool
 
-    -- The settings are the draft itself; this says whether it differs from the
-    -- server's copy. The revision counts the changes to it, so a save that
-    -- comes back can tell whether anything was changed while it was away.
+    -- The settings, as a form over the draft; the draft stays the server's
+    -- copy. Whether the form differs from it is said here rather than asked
+    -- of the form, which does not count a row added or removed as a change.
+    -- The revision counts the changes, so a save that comes back can tell
+    -- whether anything was changed while it was away.
+    , settingsForm : Form FormError DocumentTemplateDraftEditForm
     , settingsDirty : Bool
     , settingsRevision : Int
 
@@ -240,6 +249,7 @@ initialModel appState uuid =
     , collapsed = Set.empty
     , navResizer = Resizer.init (navResizerConfig appState)
     , navOverlayOpen = False
+    , settingsForm = DocumentTemplateDraftEditForm.initEmpty appState
     , settingsDirty = False
     , settingsRevision = 0
     , title = EditableTitle.init
@@ -401,7 +411,7 @@ type Msg
     | ToggleFolder String Bool
     | NavResizerMsg Resizer.Msg
     | SetNavOverlay Bool
-    | SetDraft DocumentTemplateDraftDetail
+    | SettingsFormMsg Form.Msg
     | SavedDraft Int (Result ApiError DocumentTemplateDraftDetail)
     | TitleMsg EditableTitle.Msg
     | SavedRename Int (Result ApiError DocumentTemplateDraftDetail)
@@ -452,7 +462,7 @@ update cfg appState msg model =
             let
                 ( withDraft, seed, resultCmd ) =
                     RequestHelpers.applyResultOrNotFound
-                        { setResult = \value m -> withPreviewSource value { m | draft = value }
+                        { setResult = \value m -> withPreviewSource value (withSettingsForm appState value { m | draft = value })
                         , defaultError = gettext "Unable to get the document template." appState.locale
                         , notFoundCmd = UpdateConfig.notFound cfg (NotFound.documentTemplateEditor appState)
                         , notAllowedCmd = UpdateConfig.notAllowed cfg
@@ -511,11 +521,15 @@ update cfg appState msg model =
                 -- Cmd/Ctrl+Enter does not wait for the button to be enabled.
                 quiet model
 
+            else if model.settingsDirty && Maybe.isNothing (settingsOutput appState model) then
+                -- Nothing is sent, the files neither: the settings are saved
+                -- after them, and would fail there with half of the work saved.
+                -- The fields say what is wrong; from another tab, so does the
+                -- save's error.
+                quiet (rejectSettings appState { model | saveError = Nothing })
+
             else if List.isEmpty model.dirty then
-                plain
-                    ( { model | savingDraft = True, savingFiles = Dict.empty, saveError = Nothing }
-                    , saveDraft appState model
-                    )
+                plain (saveDraft appState { model | savingFiles = Dict.empty, saveError = Nothing })
 
             else
                 plain
@@ -556,7 +570,7 @@ update cfg appState msg model =
                         quiet saved
 
                     else if saved.settingsDirty then
-                        plain ( { saved | savingDraft = True }, saveDraft appState saved )
+                        plain (saveDraft appState saved)
 
                     else
                         withSeed ( saved, clearUnloadMessageIfSaved saved )
@@ -593,7 +607,7 @@ update cfg appState msg model =
                         ( { model | publishing = Loading }
                         , DocumentTemplateDraftsApi.putDraft appState
                             model.uuid
-                            (Settings.encode (DocumentTemplatePhase.toString DocumentTemplatePhase.Released) draft)
+                            (DocumentTemplateDraftEditForm.encode (DocumentTemplatePhase.toString DocumentTemplatePhase.Released) (DocumentTemplateDraftEditForm.fromDraft draft))
                             Published
                         )
 
@@ -1085,27 +1099,41 @@ update cfg appState msg model =
 
         AddFormat ->
             case model.draft of
-                Success draft ->
+                Success _ ->
                     let
                         ( uuid, seed ) =
                             Uuid.step appState.seed
 
-                        withFormat =
-                            { draft | formats = draft.formats ++ [ Settings.newFormat (ActionResult.withDefault [] model.formatPrefabs) uuid ] }
+                        format =
+                            Settings.newFormat (ActionResult.withDefault [] model.formatPrefabs) uuid
                     in
                     ( seed
-                    , { model | draft = Success withFormat, settingsDirty = True, settingsRevision = model.settingsRevision + 1 }
+                    , settingsChanged { model | settingsForm = DocumentTemplateDraftEditForm.appendFormat appState format model.settingsForm }
                     , Window.setUnloadMessage (gettext "There are unsaved changes." appState.locale)
                     )
 
                 _ ->
                     quiet model
 
-        SetDraft draft ->
-            withSeed <|
-                ( { model | draft = Success draft, settingsDirty = True, settingsRevision = model.settingsRevision + 1 }
-                , Window.setUnloadMessage (gettext "There are unsaved changes." appState.locale)
-                )
+        SettingsFormMsg formMsg ->
+            let
+                withForm =
+                    { model | settingsForm = Form.update (DocumentTemplateDraftEditForm.validation appState) formMsg model.settingsForm }
+            in
+            case formMsg of
+                -- Focus, blur and submit change no value, so they are not a
+                -- change to save.
+                Form.Input _ _ _ ->
+                    withSeed ( settingsChanged withForm, Window.setUnloadMessage (gettext "There are unsaved changes." appState.locale) )
+
+                Form.Append _ ->
+                    withSeed ( settingsChanged withForm, Window.setUnloadMessage (gettext "There are unsaved changes." appState.locale) )
+
+                Form.RemoveItem _ _ ->
+                    withSeed ( settingsChanged withForm, Window.setUnloadMessage (gettext "There are unsaved changes." appState.locale) )
+
+                _ ->
+                    quiet withForm
 
         SavedDraft revision result ->
             case result of
@@ -1115,7 +1143,12 @@ update cfg appState msg model =
                         -- stays unsaved.
                         saved =
                             if revision == model.settingsRevision then
-                                { model | draft = Success draft, settingsDirty = False, savingDraft = False }
+                                { model
+                                    | draft = Success draft
+                                    , settingsForm = DocumentTemplateDraftEditForm.init appState draft
+                                    , settingsDirty = False
+                                    , savingDraft = False
+                                }
 
                             else
                                 { model | savingDraft = False }
@@ -1123,10 +1156,20 @@ update cfg appState msg model =
                     withSeed ( saved, clearUnloadMessageIfSaved saved )
 
                 Err error ->
+                    -- A value the server refuses is marked on its field, with
+                    -- the server's reason.
                     withSeed <|
                         ( { model
                             | saveError =
-                                failureOf (ApiError.toActionResult appState (gettext "Unable to save the document template." appState.locale) error)
+                                if hasFieldErrors error then
+                                    Just (gettext "Some settings are not valid. Correct the highlighted fields in Settings." appState.locale)
+
+                                else
+                                    failureOf (ApiError.toActionResult appState (gettext "Unable to save the document template." appState.locale) error)
+                            , settingsForm =
+                                model.settingsForm
+                                    |> Form.update (DocumentTemplateDraftEditForm.validation appState) Form.Submit
+                                    |> FormUtils.setFormErrors appState error
                             , savingDraft = False
                           }
                         , RequestHelpers.getResultCmd cfg.logoutMsg result
@@ -1148,6 +1191,7 @@ update cfg appState msg model =
                         withName name =
                             { withTitle
                                 | draft = Success { draft | name = name }
+                                , settingsForm = setSettingsName appState name model.settingsForm
                                 , settingsRevision = model.settingsRevision + 1
                             }
                     in
@@ -1177,7 +1221,7 @@ update cfg appState msg model =
                                         [ titleCmdMapped
                                         , DocumentTemplateDraftsApi.putDraft appState
                                             model.uuid
-                                            (Settings.encode "DraftDocumentTemplatePhase" { draft | name = name })
+                                            (DocumentTemplateDraftEditForm.encode "DraftDocumentTemplatePhase" (DocumentTemplateDraftEditForm.fromDraft { draft | name = name }))
                                             (SavedRename renaming.settingsRevision)
                                         ]
                                     )
@@ -1196,6 +1240,7 @@ update cfg appState msg model =
                     withSeed <|
                         ( { model
                             | draft = ActionResult.map (\draft -> { draft | name = previous }) model.draft
+                            , settingsForm = setSettingsName appState previous model.settingsForm
                             , renamingFrom = Nothing
                             , savingDraft = False
                             , saveError =
@@ -1440,17 +1485,84 @@ renameTo appState model newPath =
             Cmd.none
 
 
-saveDraft : AppState -> Model -> Cmd Msg
+{-| The settings `PUT`, when the form holds settings that can be sent. When it
+does not, nothing is sent and the form says why.
+-}
+saveDraft : AppState -> Model -> ( Model, Cmd Msg )
 saveDraft appState model =
-    case model.draft of
-        Success draft ->
-            DocumentTemplateDraftsApi.putDraft appState
+    case ( model.draft, settingsOutput appState model ) of
+        ( Success _, Just form ) ->
+            ( { model | savingDraft = True }
+            , DocumentTemplateDraftsApi.putDraft appState
                 model.uuid
-                (Settings.encode "DraftDocumentTemplatePhase" draft)
+                (DocumentTemplateDraftEditForm.encode "DraftDocumentTemplatePhase" form)
                 (SavedDraft model.settingsRevision)
+            )
+
+        ( Success _, Nothing ) ->
+            ( rejectSettings appState model, Cmd.none )
 
         _ ->
-            Cmd.none
+            ( model, Cmd.none )
+
+
+{-| What the settings form would send, validated afresh: an error the server
+set on a field is the server's, and is asked again rather than taken as final.
+-}
+settingsOutput : AppState -> Model -> Maybe DocumentTemplateDraftEditForm
+settingsOutput appState model =
+    Form.getOutput (Form.update (DocumentTemplateDraftEditForm.validation appState) Form.Validate model.settingsForm)
+
+
+{-| The settings cannot be sent: every invalid field shows its error, and from
+another tab, where those fields are not on screen, the save says where to look.
+-}
+rejectSettings : AppState -> Model -> Model
+rejectSettings appState model =
+    { model
+        | settingsForm = Form.update (DocumentTemplateDraftEditForm.validation appState) Form.Submit model.settingsForm
+        , saveError =
+            case model.route of
+                Settings _ ->
+                    model.saveError
+
+                _ ->
+                    Just (gettext "Some settings are not valid. Correct them in Settings." appState.locale)
+    }
+
+
+settingsChanged : Model -> Model
+settingsChanged model =
+    { model | settingsDirty = True, settingsRevision = model.settingsRevision + 1 }
+
+
+{-| The settings form as the draft stands, which is how it starts.
+-}
+withSettingsForm : AppState -> ActionResult DocumentTemplateDraftDetail -> Model -> Model
+withSettingsForm appState result model =
+    case result of
+        Success draft ->
+            { model | settingsForm = DocumentTemplateDraftEditForm.init appState draft }
+
+        _ ->
+            model
+
+
+setSettingsName : AppState -> String -> Form FormError DocumentTemplateDraftEditForm -> Form FormError DocumentTemplateDraftEditForm
+setSettingsName appState name =
+    Form.update (DocumentTemplateDraftEditForm.validation appState) (Form.Input "name" Form.Text (Form.Field.String name))
+
+
+{-| The server refused a value of a field, rather than the request as a whole.
+-}
+hasFieldErrors : ApiError -> Bool
+hasFieldErrors error =
+    case Maybe.andThen ServerError.getUserFormErrorData (ApiError.toServerError error) of
+        Just data ->
+            not (Dict.isEmpty data.fieldErrors)
+
+        Nothing ->
+            False
 
 
 {-| Every dirty file at once. Each answer clears that file; the settings save
@@ -1595,6 +1707,7 @@ actions appState model =
         [ Button.primary (gettext "Save" appState.locale) Save
             |> Button.withIcon (Icon.solid "fa-floppy-disk")
             |> Button.withLoading (isSaving model)
+            |> Button.withSubmitsForm
             |> Button.withTestId "dt-editor_save"
         , Button.secondary (gettext "Discard" appState.locale) (SetDiscardOpen True)
             |> Button.withDisabled (isSaving model)
@@ -1946,7 +2059,7 @@ somebody opening the settings came for.
 viewSettingsTab : AppState -> Model -> DTSettingsSection -> Html Msg
 viewSettingsTab appState model section =
     case model.draft of
-        Success draft ->
+        Success _ ->
             let
                 item ( to, label ) =
                     { label = label
@@ -1966,7 +2079,7 @@ viewSettingsTab appState model section =
                             ]
                       )
                     ]
-                , body = [ viewSettingsSection appState model draft section ]
+                , body = [ viewSettingsSection appState model section ]
                 , footer = Nothing
                 }
 
@@ -1987,8 +2100,8 @@ sectionTestId section =
             "formats"
 
 
-viewSettingsSection : AppState -> Model -> DocumentTemplateDraftDetail -> DTSettingsSection -> Html Msg
-viewSettingsSection appState model draft section =
+viewSettingsSection : AppState -> Model -> DTSettingsSection -> Html Msg
+viewSettingsSection appState model section =
     let
         ( title, body ) =
             case section of
@@ -2002,10 +2115,9 @@ viewSettingsSection appState model draft section =
                     ( gettext "Formats" appState.locale, Settings.formats config )
 
         config =
-            { locale = appState.locale
-            , draft = draft
-            , onChange = SetDraft
-            , formatPrefabs = ActionResult.withDefault [] model.formatPrefabs
+            { appState = appState
+            , form = model.settingsForm
+            , toMsg = SettingsFormMsg
             , onAddFormat = AddFormat
             }
     in

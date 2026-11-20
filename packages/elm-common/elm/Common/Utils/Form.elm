@@ -120,8 +120,8 @@ createFieldValidation : { b | locale : Gettext.Locale } -> String -> ServerError
 createFieldValidation appState fieldName fieldError =
     let
         error =
-            Maybe.withDefault "" <|
-                ServerError.messageToReadable appState fieldError
+            ServerError.messageToText appState fieldError
+                |> Maybe.withDefault (gettext "Invalid value." appState.locale)
     in
     V.field fieldName (V.fail (customError (ServerValidationError error)))
 

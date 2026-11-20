@@ -7,6 +7,7 @@ module Common.Api.Models.DocumentTemplate.DocumentTemplateFormatStep exposing
     )
 
 import Common.Utils.Form.FormError exposing (FormError)
+import Common.Utils.Form.Validate as V
 import Form.Field as Field exposing (Field)
 import Form.Validate as V exposing (Validation)
 import Json.Decode as D exposing (Decoder)
@@ -68,12 +69,12 @@ optionField ( key, value ) =
 validation : Validation FormError DocumentTemplateFormatStep
 validation =
     V.succeed DocumentTemplateFormatStep
-        |> V.andMap (V.field "name" V.string)
+        |> V.andMap (V.field "name" V.optionalString)
         |> V.andMap (V.field "options" (V.list optionValidation))
 
 
 optionValidation : Validation FormError ( String, String )
 optionValidation =
     V.succeed Tuple.pair
-        |> V.andMap (V.field "key" V.string)
-        |> V.andMap (V.field "value" V.string)
+        |> V.andMap (V.field "key" V.optionalString)
+        |> V.andMap (V.field "value" V.optionalString)

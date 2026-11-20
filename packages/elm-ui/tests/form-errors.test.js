@@ -12,9 +12,10 @@ let focused = []
 let scrolled = []
 
 // A minimal element: classes, attributes, children, a parent, and the queries used.
-function el(tag, { classes = [], type, invalid = false, checked = false, disabled = false, children = [] } = {}) {
+function el(tag, { classes = [], attributes = [], type, invalid = false, checked = false, disabled = false, children = [] } = {}) {
     const node = {
         tag,
+        attributes,
         type,
         invalid,
         checked,
@@ -47,6 +48,7 @@ function matchOne(node, selector) {
     if (selector === '.ui-form-unsaved__actions button') {
         return node.tag === 'button' && !!(node.parent && node.parent.closest('.ui-form-unsaved__actions'))
     }
+    if (selector === '[data-ui-submits-form]') return node.attributes.includes('data-ui-submits-form')
     if (selector.startsWith('.')) return node.classList.contains(selector.slice(1))
     if (selector === 'input:checked:not(:disabled)') return node.tag === 'input' && node.checked && !node.disabled
     if (selector.startsWith('input:not([type="hidden"])')) return node.tag === 'input' && node.type !== 'hidden' && !node.disabled
@@ -105,7 +107,8 @@ assert.strictEqual(firstInvalid(null, doc(field(el('input', { type: 'text' }))))
     const form = el('form', { children: [field(name)] })
     const save = el('button')
     const discard = el('button')
-    const d = doc(form, el('div', { classes: ['ui-form-unsaved'], children: [el('div', { classes: ['ui-form-unsaved__actions'], children: [discard, save] })] }))
+    const headerSave = el('button', { attributes: ['data-ui-submits-form'], children: [el('span')] })
+    const d = doc(form, el('header', { children: [headerSave] }), el('div', { classes: ['ui-form-unsaved'], children: [el('div', { classes: ['ui-form-unsaved__actions'], children: [discard, save] })] }))
     install(d, win)
 
     // The event's handlers run, then the frame that renders what they did.
@@ -117,6 +120,7 @@ assert.strictEqual(firstInvalid(null, doc(field(el('input', { type: 'text' }))))
     const submits = [
         ['submit', () => d.listeners.submit({ target: form })],
         ['unsaved bar Save', () => d.listeners.click({ target: save })],
+        ['a Save outside the form', () => d.listeners.click({ target: headerSave.children[0] })],
         ['shortcut', () => d.listeners.keydown({ key: 'Enter', ctrlKey: true, target: name })],
         ['Mac shortcut', () => d.listeners.keydown({ key: 'Enter', metaKey: true, target: d })]
     ]

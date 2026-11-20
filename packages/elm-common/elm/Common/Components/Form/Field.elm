@@ -48,6 +48,7 @@ module Common.Components.Form.Field exposing
     , withHiddenLabel
     , withHint
     , withHintMarkdown
+    , withId
     , withIdPrefix
     , withPlaceholder
     , withPrefix
@@ -1071,6 +1072,16 @@ focus of `Common.Components.Form` does not look at ids, so it is unaffected.
 withIdPrefix : String -> Field -> Field
 withIdPrefix prefix =
     mapUi (UiField.withIdPrefix prefix)
+
+
+{-| Use `id` rather than the one `fieldId` gives the field, for a page whose
+fields were known by ids of their own before they were in a form. Anything that
+finds the field by `fieldId` will not find it; the first-error focus of
+`Common.Components.Form` does not look at ids, so it is unaffected.
+-}
+withId : String -> Field -> Field
+withId id =
+    mapUi (UiField.withId id)
 
 
 withHint : String -> Field -> Field

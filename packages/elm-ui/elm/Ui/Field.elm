@@ -58,6 +58,7 @@ module Ui.Field exposing
     , withHiddenLabel
     , withHint
     , withHintHtml
+    , withId
     , withIdPrefix
     , withInputMode
     , withLabelAction
@@ -762,6 +763,15 @@ description can point at the other form's control.
 withIdPrefix : String -> Field msg -> Field msg
 withIdPrefix prefix (Field config) =
     Field { config | id = prefix ++ config.id }
+
+
+{-| Replace the field's id, and so every id derived from it — for a field built
+by something that decides the id itself, on a page whose ids are already known
+by name elsewhere.
+-}
+withId : String -> Field msg -> Field msg
+withId id (Field config) =
+    Field { config | id = id }
 
 
 withError : Maybe String -> Field msg -> Field msg

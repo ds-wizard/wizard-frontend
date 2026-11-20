@@ -30,6 +30,7 @@ module Ui.Button exposing
     , withId
     , withLoading
     , withPressed
+    , withSubmitsForm
     , withTestId
     , withTooltip
     , withTooltipAt
@@ -90,6 +91,7 @@ type alias Config msg =
     , pressed : Maybe Bool
     , badge : Maybe (Badge msg)
     , tooltipPlacement : Tooltip.Placement
+    , submitsForm : Bool
     }
 
 
@@ -137,6 +139,7 @@ base variant label action =
         , pressed = Nothing
         , badge = Nothing
         , tooltipPlacement = Tooltip.Below
+        , submitsForm = False
         }
 
 
@@ -506,6 +509,20 @@ withId elementId (Button config) =
     Button { config | elementId = Just elementId }
 
 
+{-| A plain button that saves a form it is not part of — a page's Save in its
+header, say, for settings that are not one `form` element. An invalid save
+then focuses the first field that is wrong and scrolls it into view, as a
+form's own submit does (`packages/elm-ui/js/form-errors.js`).
+
+The unsaved bar's buttons need not say it, and a `submit` button is a form's
+submit already.
+
+-}
+withSubmitsForm : Button msg -> Button msg
+withSubmitsForm (Button config) =
+    Button { config | submitsForm = True }
+
+
 toHtml : Button msg -> Html msg
 toHtml (Button config) =
     let
@@ -603,6 +620,13 @@ toHtml (Button config) =
                 Nothing ->
                     []
 
+        submitsFormAttrs =
+            if config.submitsForm then
+                [ attribute "data-ui-submits-form" "" ]
+
+            else
+                []
+
         busyAttrs =
             if config.loading && not config.done then
                 [ attribute "aria-busy" "true" ]
@@ -685,6 +709,7 @@ toHtml (Button config) =
                     ++ pressedAttrs
                     ++ reasonAttrs
                     ++ tooltipAttrs
+                    ++ submitsFormAttrs
                     ++ testIdAttrs
                 )
                 content

@@ -10,6 +10,9 @@
 //     dialog's form, and Enter in a field;
 //   - a button of the unsaved bar (`.ui-form-unsaved__actions`), which is
 //     outside the form and so a plain button;
+//   - any other plain button that saves a form it is not part of, marked
+//     `data-ui-submits-form` (`Ui.Button.withSubmitsForm`) — a page's Save in
+//     its header;
 //   - Cmd+Enter or Ctrl+Enter, the submit shortcut (`Ui.Form.submitShortcut`).
 //
 // The submit is the application's: it validates and renders the errors on the
@@ -25,6 +28,7 @@
 // and the inputs in it are not individually wrong — so its message is what is
 // found, and focus goes to the checked option, or the first one.
 
+const SUBMITS = '.ui-form-unsaved__actions button, [data-ui-submits-form]'
 const INVALID = '[aria-invalid="true"], .ui-field__error'
 const FOCUSABLE = 'input:not([type="hidden"]):not(:disabled), select:not(:disabled), textarea:not(:disabled), [contenteditable="true"]'
 
@@ -66,7 +70,7 @@ function install(doc, win) {
     })
 
     doc.addEventListener('click', function (event) {
-        if (event.target.closest && event.target.closest('.ui-form-unsaved__actions button')) afterRender(null)
+        if (event.target.closest && event.target.closest(SUBMITS)) afterRender(null)
     })
 
     doc.addEventListener('keydown', function (event) {

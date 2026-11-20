@@ -320,6 +320,20 @@ messageToReadable appState message =
         "error.validation.pkg_unsupported_metamodel_version" ->
             Just <| gettext "Knowledge model metamodel version is not supported." appState.locale
 
+        "error.validation.invalid_coordinate_part_format" ->
+            case message.params of
+                [ _, value ] ->
+                    Just <| String.format (gettext "'%s' is not in a valid format. Use only letters, numbers, hyphens, underscores, and dots." appState.locale) [ value ]
+
+                _ ->
+                    Just <| gettext "This is not in a valid format. Use only letters, numbers, hyphens, underscores, and dots." appState.locale
+
+        "error.validation.invalid_coordinate_format" ->
+            Just <| gettext "The coordinate is not in a valid format." appState.locale
+
+        "error.validation.invalid_coordinate_version_format" ->
+            Just <| gettext "The version is not in a valid format." appState.locale
+
         "error.validation.tml_id_uniqueness" ->
             Just <| gettext "Document template already exists." appState.locale
 

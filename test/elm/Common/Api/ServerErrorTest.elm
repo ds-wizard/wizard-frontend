@@ -27,4 +27,16 @@ serverErrorTests =
             \_ ->
                 toText "error.service.something.new" "" []
                     |> Expect.equal Nothing
+        , test "an identifier in a format it cannot have says which characters it can have" <|
+            \_ ->
+                toText "error.validation.invalid_coordinate_part_format" "%s '%s' is not in the valid format" [ "id", "test!" ]
+                    |> Expect.equal (Just "'test!' is not in a valid format. Use only letters, numbers, hyphens, underscores, and dots.")
+        , test "a coordinate in a format it cannot have" <|
+            \_ ->
+                toText "error.validation.invalid_coordinate_format" "" []
+                    |> Expect.equal (Just "The coordinate is not in a valid format.")
+        , test "a version in a format it cannot have" <|
+            \_ ->
+                toText "error.validation.invalid_coordinate_version_format" "" []
+                    |> Expect.equal (Just "The version is not in a valid format.")
         ]

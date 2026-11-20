@@ -125,6 +125,7 @@ import Common.Ports.Form as FormPort
 import Common.Ports.Window as Window
 import Common.Routes as Routes
 import Common.Utils.CurlUtils as CurlUtils
+import Common.Utils.Form as FormUtils
 import Common.Utils.Form.FormError exposing (FormError)
 import Common.Utils.RequestHelpers as RequestHelpers
 import Debounce exposing (Debounce)
@@ -873,7 +874,15 @@ update cfg appState msg model =
 
                 Err error ->
                     ( appState.seed
-                    , { model | savingSettings = ApiError.toActionResult appState (gettext "Unable to save the settings." appState.locale) error }
+                    , { model
+                        | savingSettings = ApiError.toActionResult appState (gettext "Unable to save the settings." appState.locale) error
+                        , settingsForm =
+                            -- Submitted, so the server's reason shows on its
+                            -- field even while the field still has focus.
+                            model.settingsForm
+                                |> Form.update (KnowledgeModelEditorEditForm.validation appState) Form.Submit
+                                |> FormUtils.setFormErrors appState error
+                      }
                     , RequestHelpers.getResultCmd cfg.logoutMsg result
                     )
 
