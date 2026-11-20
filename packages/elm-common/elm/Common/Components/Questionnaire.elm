@@ -1521,6 +1521,9 @@ applyProjectEvent event model =
                 ProjectEvent.ClearReply data ->
                     ProjectQuestionnaire.clearReplyValue data.path before
 
+                ProjectEvent.DeleteItem data ->
+                    ProjectQuestionnaire.deleteItem data.path data.itemUuid before
+
                 ProjectEvent.SetPhase data ->
                     ProjectQuestionnaire.setPhaseUuid data.phaseUuid before
 

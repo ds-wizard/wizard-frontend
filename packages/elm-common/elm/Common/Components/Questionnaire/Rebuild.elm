@@ -14,7 +14,7 @@ derived numbers are worked out again and how much of them.
 **Rebuild only on structure.** `Nodes.build` makes a new record for every node,
 and a new record misses its lazy check, so a rebuild re-renders the chapter. It is
 needed only when the shape of the chapter can have changed: an answer chosen
-(follow-ups come and go), the items of a list, a cleared reply. Typing,
+(follow-ups come and go), the items of a list, a cleared reply, a deleted item. Typing,
 checkboxes, selects, files, TODOs and comments change a reply or a count, and
 only the node that shows it re-renders. Chapter changes, collapses, view settings
 and the phase rebuild too, but they are not events; the questionnaire rebuilds
@@ -24,12 +24,12 @@ for them where it handles them.
 of every chapter after every reply — on every keystroke. Here only the chapter
 the reply is in is counted again, and only when the reply can have changed
 whether its question counts as answered: an empty value becoming a value or back,
-a chosen answer, a list's items, a clear. When the count comes out the same, the
+a chosen answer, a list's items, a clear, a deleted item. When the count comes out the same, the
 very same `Dict` is returned, so whatever takes it as a lazy argument (the chapter
 navigation, the toolbar) does not re-render either.
 
 **The toolbar's other numbers** follow the same idea. TODOs change with the
-labels and with what is visible (an answer, the items, a clear). Warnings are the
+labels and with what is visible (an answer, the items, a clear, a deleted item). Warnings are the
 reason for the care: the wizard walked the whole questionnaire for them after every
 keystroke in a text field. Here a reply that changes no structure checks its own
 question only, and the list is worked out again only when that question's warning
@@ -58,6 +58,9 @@ needsRebuild projectEvent =
             isStructural reply.value
 
         ProjectEvent.ClearReply _ ->
+            True
+
+        ProjectEvent.DeleteItem _ ->
             True
 
         _ ->
@@ -91,6 +94,9 @@ updateChapterUnansweredCounts event questionnaires counts =
 
         ProjectEvent.ClearReply reply ->
             recountChapter (Path.chapterUuid reply.path) questionnaires.after counts
+
+        ProjectEvent.DeleteItem data ->
+            recountChapter (Path.chapterUuid data.path) questionnaires.after counts
 
         _ ->
             counts
@@ -164,6 +170,9 @@ updateUnanswered event after current =
                 ProjectEvent.ClearReply _ ->
                     Just (keepListIfEqual unanswered (ProjectQuestionnaire.getUnansweredQuestions after))
 
+                ProjectEvent.DeleteItem _ ->
+                    Just (keepListIfEqual unanswered (ProjectQuestionnaire.getUnansweredQuestions after))
+
                 ProjectEvent.SetPhase _ ->
                     Just (keepListIfEqual unanswered (ProjectQuestionnaire.getUnansweredQuestions after))
 
@@ -198,6 +207,9 @@ updateTodos event after todos =
         ProjectEvent.ClearReply _ ->
             ProjectQuestionnaire.getTodos after
 
+        ProjectEvent.DeleteItem _ ->
+            ProjectQuestionnaire.getTodos after
+
         _ ->
             todos
 
@@ -219,6 +231,9 @@ updateWarnings event after warnings =
                 ProjectQuestionnaire.getWarnings after
 
         ProjectEvent.ClearReply _ ->
+            ProjectQuestionnaire.getWarnings after
+
+        ProjectEvent.DeleteItem _ ->
             ProjectQuestionnaire.getWarnings after
 
         _ ->

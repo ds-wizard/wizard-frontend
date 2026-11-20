@@ -31,6 +31,11 @@ setPhase n =
     ProjectEvent.SetPhase { uuid = uuid n, phaseUuid = Nothing, createdAt = Time.millisToPosix n, createdBy = Nothing }
 
 
+deleteItem : Int -> String -> Int -> ProjectEvent
+deleteItem n path author =
+    ProjectEvent.DeleteItem { uuid = uuid n, path = path, itemUuid = String.fromInt n, itemTitle = Nothing, createdAt = Time.millisToPosix n, createdBy = Just (user author) }
+
+
 version : Int -> ProjectVersion
 version eventN =
     { uuid = uuid (200 + eventN), name = "v", description = Nothing, eventUuid = uuid eventN, createdAt = Time.millisToPosix 0, createdBy = Nothing }
@@ -64,4 +69,14 @@ collapseTypingTest =
                 VersionHistory.collapseTyping [ version 2 ] [ setReply 3 "q" 1, setReply 2 "q" 1, setReply 1 "q" 1 ]
                     |> uuids
                     |> Expect.equal [ uuid 3, uuid 2 ]
+        , test "keeps every item deleted from a list by one person" <|
+            \_ ->
+                VersionHistory.collapseTyping [] [ deleteItem 3 "l" 1, deleteItem 2 "l" 1, deleteItem 1 "l" 1 ]
+                    |> uuids
+                    |> Expect.equal [ uuid 3, uuid 2, uuid 1 ]
+        , test "a deleted item does not hide an older change of the list" <|
+            \_ ->
+                VersionHistory.collapseTyping [] [ deleteItem 2 "l" 1, setReply 1 "l" 1 ]
+                    |> uuids
+                    |> Expect.equal [ uuid 2, uuid 1 ]
         ]

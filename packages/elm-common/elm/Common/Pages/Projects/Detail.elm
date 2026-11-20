@@ -1134,6 +1134,9 @@ isSetting event =
         ProjectEvent.ClearReply _ ->
             True
 
+        ProjectEvent.DeleteItem _ ->
+            True
+
         ProjectEvent.SetPhase _ ->
             True
 

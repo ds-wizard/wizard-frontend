@@ -266,7 +266,26 @@ update appState cfg msg model =
         RemoveItemConfirm ->
             case model.removeItem of
                 Just item ->
-                    withEvent { model | removeItem = Nothing } Cmd.none (setReply item.path (ItemListReply (List.filter ((/=) item.itemUuid) item.itemUuids)))
+                    let
+                        listQuestionUuid =
+                            Maybe.withDefault "" (List.last (String.split "." item.path))
+
+                        itemTitle =
+                            ProjectQuestionnaire.getItemTitle cfg.questionnaire
+                                (String.split "." item.path ++ [ item.itemUuid ])
+                                (KnowledgeModel.getQuestionItemTemplateQuestions listQuestionUuid cfg.questionnaire.knowledgeModel)
+
+                        deleteItemEvent uuid =
+                            ProjectEvent.DeleteItem
+                                { uuid = uuid
+                                , path = item.path
+                                , itemUuid = item.itemUuid
+                                , itemTitle = itemTitle
+                                , createdAt = appState.currentTime
+                                , createdBy = createdBy appState
+                                }
+                    in
+                    withEvent { model | removeItem = Nothing } Cmd.none deleteItemEvent
 
                 Nothing ->
                     plain model Cmd.none

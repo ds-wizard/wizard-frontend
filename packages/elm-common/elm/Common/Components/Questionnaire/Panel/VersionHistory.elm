@@ -28,7 +28,8 @@ than a scroll (§11.7).
 
 **Typing is one change.** Every keystroke in a field is an event; within a day,
 only the newest change of a question by the same person is shown, unless an
-older one is a named version.
+older one is a named version. A deleted item is never folded away: each deletion
+from a list is a change of its own, not a step of typing.
 
 **What a row offers** depends on who is looking: naming, renaming and deleting a
 version are the owner's, viewing the questionnaire at an event and making a
@@ -470,7 +471,8 @@ groupByDay appState events =
 {-| A day's changes, newest first, with the older changes of a question left out
 while the same person made the newer one — typing sends an event per keystroke,
 and the history shows what was typed, not every step of it. A named version is
-always kept, and so is anything without a question (a phase).
+always kept, and so is anything without a question (a phase) and every deleted
+item, which is a change of its own however many were deleted from one list.
 -}
 collapseTyping : List ProjectVersion -> List ProjectEvent -> List ProjectEvent
 collapseTyping versions events =
@@ -482,15 +484,18 @@ collapseTyping versions events =
             Maybe.map (.uuid >> Uuid.toString) (ProjectEvent.getCreatedBy event)
 
         step event ( newerAuthors, kept ) =
-            case ProjectEvent.getPath event of
-                Just path ->
+            case ( event, ProjectEvent.getPath event ) of
+                ( ProjectEvent.DeleteItem _, _ ) ->
+                    ( newerAuthors, event :: kept )
+
+                ( _, Just path ) ->
                     if not (isNamed event) && Dict.get path newerAuthors == Just (authorOf event) then
                         ( newerAuthors, kept )
 
                     else
                         ( Dict.insert path (authorOf event) newerAuthors, event :: kept )
 
-                Nothing ->
+                ( _, Nothing ) ->
                     ( newerAuthors, event :: kept )
     in
     List.foldl step ( Dict.empty, [] ) events
@@ -695,7 +700,8 @@ avatarOf mbUser =
 
 
 {-| What a change did, in as much detail as the change carries: the question it
-was to and the answer it left there, or the phase the project was moved to.
+was to and the answer it left there, the item deleted from a list, or the phase
+the project was moved to.
 
 Without it, a history of "Data description"
 eleven times over says only that somebody kept changing their mind.
@@ -719,6 +725,19 @@ viewWhat appState cfg event =
         ProjectEvent.ClearReply data ->
             [ question data.path
             , viewValue (Icon.solid "fa-eraser") [ text (gettext "The answer was cleared." appState.locale) ]
+            ]
+
+        ProjectEvent.DeleteItem data ->
+            [ question data.path
+            , case data.itemTitle of
+                Just itemTitle ->
+                    viewValue (Icon.solid "fa-trash")
+                        (String.formatHtml (gettext "Item deleted: %s" appState.locale)
+                            [ strong [] [ text itemTitle ] ]
+                        )
+
+                Nothing ->
+                    viewValue (Icon.solid "fa-trash") [ text (gettext "An item was deleted." appState.locale) ]
             ]
 
         ProjectEvent.SetPhase data ->

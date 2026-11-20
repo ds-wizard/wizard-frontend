@@ -13,6 +13,7 @@ module Common.Api.Models.ProjectQuestionnaire exposing
     , concatMapVisibleQuestions
     , createQuestionnaireDetail
     , decoder
+    , deleteItem
     , generateReplies
     , getClosestQuestionParentPath
     , getComments
@@ -310,6 +311,35 @@ setReply path reply questionnaire =
 clearReplyValue : String -> ProjectQuestionnaire -> ProjectQuestionnaire
 clearReplyValue path questionnaire =
     { questionnaire | replies = Dict.remove path questionnaire.replies }
+
+
+{-| Removes the item from the list at the path, with every reply and label nested in it.
+Does nothing when the item is no longer there.
+-}
+deleteItem : String -> String -> ProjectQuestionnaire -> ProjectQuestionnaire
+deleteItem path itemUuid questionnaire =
+    let
+        itemPrefix =
+            path ++ "." ++ itemUuid ++ "."
+
+        notInItem key _ =
+            not (String.startsWith itemPrefix key)
+
+        removeFromList reply =
+            case reply.value of
+                ItemListReply itemUuids ->
+                    { reply | value = ItemListReply (List.filter ((/=) itemUuid) itemUuids) }
+
+                _ ->
+                    reply
+    in
+    { questionnaire
+        | replies =
+            questionnaire.replies
+                |> Dict.update path (Maybe.map removeFromList)
+                |> Dict.filter notInItem
+        , labels = Dict.filter notInItem questionnaire.labels
+    }
 
 
 setLabels : String -> List String -> ProjectQuestionnaire -> ProjectQuestionnaire

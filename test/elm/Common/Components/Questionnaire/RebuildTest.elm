@@ -28,6 +28,29 @@ clearReply path =
     ProjectEvent.ClearReply { uuid = Uuid.nil, path = path, createdAt = Time.millisToPosix 0, createdBy = Nothing }
 
 
+deleteItem : String -> String -> ProjectEvent
+deleteItem path itemUuid =
+    ProjectEvent.DeleteItem { uuid = Uuid.nil, path = path, itemUuid = itemUuid, itemTitle = Nothing, createdAt = Time.millisToPosix 0, createdBy = Nothing }
+
+
+listPath : String
+listPath =
+    Fixture.chapter1 ++ "." ++ Fixture.list
+
+
+itemValuePath : String
+itemValuePath =
+    listPath ++ ".item." ++ Fixture.template
+
+
+{-| A list with one item, its question labeled TODO.
+-}
+withItem : ProjectQuestionnaire
+withItem =
+    Fixture.questionnaire (Dict.singleton listPath (Fixture.reply (ItemListReply [ "item" ])))
+        |> ProjectQuestionnaire.setLabels itemValuePath [ ProjectQuestionnaire.todoUuid ]
+
+
 withValue1 : Maybe String -> ProjectQuestionnaire
 withValue1 mbValue =
     Fixture.questionnaire
@@ -96,6 +119,19 @@ unansweredTest =
                             , ( Fixture.chapter2, 99 )
                             ]
                         )
+        , test "counts again the chapter of a deleted item, and only that chapter" <|
+            \_ ->
+                let
+                    after =
+                        ProjectQuestionnaire.deleteItem listPath "item" withItem
+                in
+                update (deleteItem listPath "item") withItem after
+                    |> Expect.equal
+                        (Dict.fromList
+                            [ ( Fixture.chapter1, ProjectQuestionnaire.calculateUnansweredQuestionsForChapter after Fixture.chapter1 )
+                            , ( Fixture.chapter2, 99 )
+                            ]
+                        )
         , test "counts every chapter again when the phase changes" <|
             \_ ->
                 let
@@ -121,14 +157,15 @@ needsRebuildTest =
             Fixture.reply (StringReply "")
     in
     describe "Rebuild.needsRebuild"
-        [ test "rebuilds when an answer is chosen, a list's items change, or a reply is cleared" <|
+        [ test "rebuilds when an answer is chosen, a list's items change, a reply is cleared or an item deleted" <|
             \_ ->
                 [ setReply value1Path (AnswerReply Fixture.optionsAnswer)
                 , setReply value1Path (ItemListReply [])
                 , clearReply value1Path
+                , deleteItem listPath "item"
                 ]
                     |> List.map Rebuild.needsRebuild
-                    |> Expect.equal [ True, True, True ]
+                    |> Expect.equal [ True, True, True, True ]
         , test "does not rebuild for typing, choices, labels or the phase" <|
             \_ ->
                 [ setReply value1Path reply.value
@@ -171,4 +208,16 @@ derivedTest =
             \_ ->
                 Rebuild.updateWarnings (clearReply value1Path) (withValue1 Nothing) (ProjectQuestionnaire.getWarnings (withValue1 Nothing))
                     |> Expect.equal []
+        , test "a deleted item takes its TODOs with it" <|
+            \_ ->
+                Rebuild.updateTodos (deleteItem listPath "item") (ProjectQuestionnaire.deleteItem listPath "item" withItem) (ProjectQuestionnaire.getTodos withItem)
+                    |> Expect.equal []
+        , test "a deleted item works the unanswered questions out again" <|
+            \_ ->
+                let
+                    after =
+                        ProjectQuestionnaire.deleteItem listPath "item" withItem
+                in
+                Rebuild.updateUnanswered (deleteItem listPath "item") after (Just (ProjectQuestionnaire.getUnansweredQuestions withItem))
+                    |> Expect.equal (Just (ProjectQuestionnaire.getUnansweredQuestions after))
         ]

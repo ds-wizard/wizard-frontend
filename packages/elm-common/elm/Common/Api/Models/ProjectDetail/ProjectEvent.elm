@@ -15,6 +15,7 @@ import Common.Api.Models.ProjectDetail.ProjectEvent.AssignCommentThreadData as A
 import Common.Api.Models.ProjectDetail.ProjectEvent.ClearReplyData as ClearReplyData exposing (ClearReplyData)
 import Common.Api.Models.ProjectDetail.ProjectEvent.DeleteCommentData as DeleteCommentData exposing (DeleteCommentData)
 import Common.Api.Models.ProjectDetail.ProjectEvent.DeleteCommentThreadData as DeleteCommentThreadData exposing (DeleteCommentThreadData)
+import Common.Api.Models.ProjectDetail.ProjectEvent.DeleteItemData as DeleteItemData exposing (DeleteItemData)
 import Common.Api.Models.ProjectDetail.ProjectEvent.EditCommentData as EditCommentData exposing (EditCommentData)
 import Common.Api.Models.ProjectDetail.ProjectEvent.ReopenCommentThreadData as ReopenCommentThreadData exposing (ReopenCommentThreadData)
 import Common.Api.Models.ProjectDetail.ProjectEvent.ResolveCommentThreadData as ResolveCommentThreadData exposing (ResolveCommentThreadData)
@@ -33,6 +34,7 @@ import Uuid exposing (Uuid)
 type ProjectEvent
     = SetReply SetReplyData
     | ClearReply ClearReplyData
+    | DeleteItem DeleteItemData
     | SetPhase SetPhaseData
     | SetLabels SetLabelsData
     | ResolveCommentThread ResolveCommentThreadData
@@ -58,6 +60,9 @@ decoderByType actionType =
 
         "ClearReplyEvent" ->
             D.map ClearReply ClearReplyData.decoder
+
+        "DeleteItemEvent" ->
+            D.map DeleteItem DeleteItemData.decoder
 
         "SetPhaseEvent" ->
             D.map SetPhase SetPhaseData.decoder
@@ -95,6 +100,7 @@ encode =
     map
         SetReplyData.encode
         ClearReplyData.encode
+        DeleteItemData.encode
         SetPhaseData.encode
         SetLabelsData.encode
         ResolveCommentThreadData.encode
@@ -123,28 +129,31 @@ isInvisible event =
         ClearReply _ ->
             False
 
+        DeleteItem _ ->
+            False
+
         _ ->
             True
 
 
 getUuid : ProjectEvent -> Uuid
 getUuid =
-    map .uuid .uuid .uuid .uuid .uuid .uuid .uuid .uuid .uuid .uuid .uuid
+    map .uuid .uuid .uuid .uuid .uuid .uuid .uuid .uuid .uuid .uuid .uuid .uuid
 
 
 getPath : ProjectEvent -> Maybe String
 getPath =
-    map (.path >> Just) (.path >> Just) (always Nothing) (.path >> Just) (.path >> Just) (.path >> Just) (.path >> Just) (.path >> Just) (.path >> Just) (.path >> Just) (.path >> Just)
+    map (.path >> Just) (.path >> Just) (.path >> Just) (always Nothing) (.path >> Just) (.path >> Just) (.path >> Just) (.path >> Just) (.path >> Just) (.path >> Just) (.path >> Just) (.path >> Just)
 
 
 getCreatedAt : ProjectEvent -> Time.Posix
 getCreatedAt =
-    map .createdAt .createdAt .createdAt .createdAt .createdAt .createdAt .createdAt .createdAt .createdAt .createdAt .createdAt
+    map .createdAt .createdAt .createdAt .createdAt .createdAt .createdAt .createdAt .createdAt .createdAt .createdAt .createdAt .createdAt
 
 
 getCreatedBy : ProjectEvent -> Maybe UserSuggestion
 getCreatedBy =
-    map .createdBy .createdBy .createdBy .createdBy .createdBy .createdBy .createdBy .createdBy .createdBy .createdBy .createdBy
+    map .createdBy .createdBy .createdBy .createdBy .createdBy .createdBy .createdBy .createdBy .createdBy .createdBy .createdBy .createdBy
 
 
 getQuestionUuid : ProjectEvent -> Maybe String
@@ -155,6 +164,7 @@ getQuestionUuid =
 map :
     (SetReplyData -> a)
     -> (ClearReplyData -> a)
+    -> (DeleteItemData -> a)
     -> (SetPhaseData -> a)
     -> (SetLabelsData -> a)
     -> (ResolveCommentThreadData -> a)
@@ -166,13 +176,16 @@ map :
     -> (DeleteCommentData -> a)
     -> ProjectEvent
     -> a
-map mapSetReply mapClearReply mapSetLevel mapSetLabels mapResolveCommentThread mapReopenCommentThread mapDeleteCommentThread mapAssignCommentThread mapAddComment mapEditComment mapDeleteComment event =
+map mapSetReply mapClearReply mapDeleteItem mapSetLevel mapSetLabels mapResolveCommentThread mapReopenCommentThread mapDeleteCommentThread mapAssignCommentThread mapAddComment mapEditComment mapDeleteComment event =
     case event of
         SetReply data ->
             mapSetReply data
 
         ClearReply data ->
             mapClearReply data
+
+        DeleteItem data ->
+            mapDeleteItem data
 
         SetPhase data ->
             mapSetLevel data
