@@ -335,7 +335,9 @@ viewPlugin appState ( pluginMetadata, state ) =
                 []
     in
     Layout.stack
-        (Layout.inlineBetween
+        -- Not a row that wraps: a long description would take the line and
+        -- send the settings button below it.
+        (div [ class "c-settings-plugins__plugin" ]
             [ Field.toggle
                 { id = "plugin-" ++ pluginUuidString
                 , label = pluginMetadata.name

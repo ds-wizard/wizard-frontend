@@ -7,3 +7,13 @@
 .c-settings-plugins {
   --ui-stack-gap: 0;
 }
+
+// A plugin's switch, and its settings button at the end of the first line. The
+// switch takes what room there is, however long its description, so the button
+// stays beside it rather than wrapping under it.
+.c-settings-plugins__plugin {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: start;
+  gap: var(--ui-space-3);
+}
