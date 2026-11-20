@@ -48,7 +48,9 @@
 
   &::placeholder { color: var(--ui-text-muted); }
 
-  &:hover:not(:disabled) { border-color: var(--ui-border-strong); }
+  // Not on an invalid input: `:not()` lifts the hover rule above `.is-invalid`,
+  // which would otherwise lose its border while hovered.
+  &:hover:not(:disabled, .is-invalid) { border-color: var(--ui-border-strong); }
 
   &:disabled {
     background: var(--ui-surface-sunken);
