@@ -1,8 +1,8 @@
-# Data Stewardship Wizard Engine Frontend
+# Data Stewardship Wizard Frontend
 
 [![User Guide](https://img.shields.io/badge/docs-User%20Guide-informational)](https://guide.ds-wizard.org)
-[![Engine Frontend CI](https://github.com/ds-wizard/engine-frontend/actions/workflows/pipeline.yml/badge.svg)](https://github.com/ds-wizard/engine-frontend/actions)
-[![License](https://img.shields.io/github/license/ds-wizard/engine-frontend)](LICENSE)
+[![Wizard Frontend CI](https://github.com/ds-wizard/wizard-frontend/actions/workflows/pipeline.yml/badge.svg)](https://github.com/ds-wizard/wizard-frontend/actions)
+[![License](https://img.shields.io/github/license/ds-wizard/wizard-frontend)](LICENSE)
 [![CII Best Practices](https://bestpractices.coreinfrastructure.org/projects/4975/badge)](https://bestpractices.coreinfrastructure.org/projects/4975)
 
 Web clients for Data Stewardship Wizard, and the design system they are built on. An

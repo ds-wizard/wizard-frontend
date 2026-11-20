@@ -1,6 +1,6 @@
 {
-  "name": "engine-frontend",
-  "repository": "https://github.com/ds-wizard/engine-frontend",
+  "name": "wizard-frontend",
+  "repository": "https://github.com/ds-wizard/wizard-frontend",
   "license": "Apache-2.0",
   "scripts": {
     "replace-kernel-packages": "ELM_HOME=$PWD/elm-stuff/elm-home node packages/elm-kernel-replacements/replace-kernel-packages.mjs",
