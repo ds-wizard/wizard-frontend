@@ -100,4 +100,32 @@ assert.strictEqual(nextIndex(0, 0, 'ArrowRight'), 0, 'an empty toolbar has nowhe
     assert.ok(/if \(next === this\._value\) return/.test(source), 'an update that changes nothing is not sent on')
 }
 
+// Images are inline, as where the markdown is rendered. Several on one line
+// stay one paragraph and are written back on one line; one alone stays in its
+// paragraph. As blocks inside a paragraph they broke the schema, and typing
+// next to them threw.
+{
+    const { getSchema } = require('@tiptap/core')
+    const { MarkdownManager } = require('@tiptap/markdown')
+    const { extensions } = require('../js/markdown-editor')
+
+    const schema = getSchema(extensions())
+    const markdown = new MarkdownManager({ extensions: extensions() })
+
+    for (const source of [
+        '![A](https://example.org/a.png) ![B](https://example.org/b.png)',
+        'Logos: ![A](https://example.org/a.png) and ![B](https://example.org/b.png).',
+        '# Logos\n\n![Alone](https://example.org/a.png)\n\nAfter.',
+        'Before.\n\n![Alone](https://example.org/a.png)'
+    ]) {
+        const json = markdown.parse(source)
+        assert.doesNotThrow(() => schema.nodeFromJSON(json).check(), `${JSON.stringify(source)} must fit the schema`)
+        assert.ok(
+            json.content.every((node) => node.type !== 'image'),
+            `${JSON.stringify(source)}: an image stays inside a paragraph`
+        )
+        assert.strictEqual(markdown.serialize(json), source, 'images are written back as they were')
+    }
+}
+
 console.log('ui markdown editor contract OK')

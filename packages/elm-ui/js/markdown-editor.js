@@ -23,6 +23,34 @@ const { StarterKit } = require('@tiptap/starter-kit')
 const { Markdown } = require('@tiptap/markdown')
 const { Link } = require('@tiptap/extension-link')
 const { Image } = require('@tiptap/extension-image')
+const { Paragraph } = require('@tiptap/extension-paragraph')
+
+// Images in markdown are inline content, as they are where the markdown is
+// rendered: several on one line are one paragraph and sit side by side. As
+// blocks, which is the default, a paragraph holding them breaks the document's
+// schema and typing in it throws.
+//
+// The paragraph normally lifts an image that is alone in it out to stand as a
+// block, which an inline image cannot; here it stays in its paragraph.
+const ImageParagraph = Paragraph.extend({
+    parseMarkdown(token, helpers) {
+        const tokens = token.tokens || []
+        if (tokens.length === 1 && tokens[0].type === 'image') {
+            return helpers.createNode('paragraph', undefined, helpers.parseInline(tokens))
+        }
+        return this.parent(token, helpers)
+    }
+})
+
+// The editor's extensions, for the editor and for the tests that read and
+// write markdown with them.
+const extensions = () => [
+    StarterKit.configure({ heading: { levels: [2, 3] }, link: false, paragraph: false }),
+    ImageParagraph,
+    Link.configure({ openOnClick: false }),
+    Image.configure({ inline: true }),
+    Markdown
+]
 
 // Every command in the toolbar, in the order they appear. `active` is what
 // decides whether the button reads as pressed, which for a toggle is the whole
@@ -389,12 +417,7 @@ function define() {
             this.editor = new Editor({
                 element: this._surface,
                 autofocus: false,
-                extensions: [
-                    StarterKit.configure({ heading: { levels: [2, 3] }, link: false }),
-                    Link.configure({ openOnClick: false }),
-                    Image,
-                    Markdown
-                ],
+                extensions: extensions(),
                 content: this._value,
                 contentType: 'markdown',
                 onUpdate: ({ editor }) => {
@@ -662,4 +685,4 @@ if (typeof customElements !== 'undefined' && typeof HTMLElement !== 'undefined')
     define()
 }
 
-module.exports = { COMMANDS, MODES, DEFAULT_WORDS, nextIndex, wordsFrom }
+module.exports = { COMMANDS, MODES, DEFAULT_WORDS, extensions, nextIndex, wordsFrom }

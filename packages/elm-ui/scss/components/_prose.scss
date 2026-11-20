@@ -108,9 +108,15 @@
     background: var(--ui-border-subtle);
   }
 
+  // The reset makes images blocks; markdown images are inline content, so
+  // prose makes them inline again: images on one line sit side by side and
+  // wrap, and one alone in its paragraph still takes its own line. Middle
+  // alignment leaves no baseline gap under the image.
   img {
+    display: inline-block;
     max-inline-size: 100%;
     block-size: auto;
+    vertical-align: middle;
     border-radius: var(--ui-radius-control);
   }
 

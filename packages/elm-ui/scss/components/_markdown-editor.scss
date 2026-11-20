@@ -248,8 +248,12 @@ ui-markdown-editor {
     color: var(--ui-text-muted);
   }
 
+  // The editor's images are inline content (markdown-editor.js), laid out as
+  // prose lays them out, so the editor shows what will be rendered.
   img {
+    display: inline-block;
     max-inline-size: 100%;
+    vertical-align: middle;
     border-radius: var(--ui-radius-control);
   }
 }
