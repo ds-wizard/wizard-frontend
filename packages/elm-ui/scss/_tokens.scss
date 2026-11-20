@@ -109,6 +109,11 @@
   // the floor below the requirement and fail it.
   --ui-hit-min: 24px;
 
+  // How tall a default button is (`.ui-button`: its padding, one line of body
+  // text, its border). A page's heading row is at least this tall, so a title
+  // is in the same place whether the page has buttons beside it or not.
+  --ui-button-block-size: calc(2 * var(--ui-space-3) + var(--ui-text-body) * var(--ui-leading-tight) + 2px);
+
   // The width of a settings form: the column the settings pages give their
   // forms, a form on a detail page's tab, and the unsaved-changes bar under
   // either. One value, because the bar is read as belonging to the form above it

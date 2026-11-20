@@ -59,6 +59,17 @@
   min-inline-size: 0;
 }
 
+// The title's line is as tall as a button whether there are buttons beside it
+// or not: centered against a taller button, a title sat lower than on a page
+// without one, and everything under the header with it — the search field of
+// one list a few pixels off another's. On the line itself rather than the
+// row, so a description under the title does not move it either.
+.ui-page__heading > .ui-page-title {
+  display: flex;
+  align-items: center;
+  min-block-size: var(--ui-button-block-size);
+}
+
 .ui-page__body {
   display: flex;
   flex-direction: column;

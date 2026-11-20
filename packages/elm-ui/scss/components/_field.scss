@@ -1313,6 +1313,14 @@
     max-inline-size: none;
   }
 
+  // A row of fields side by side (`Ui.Layout.grid`) is as wide as the set.
+  // Left to its intrinsic width, the auto-fit grid was measured as if its
+  // fields wrapped, one under another, and kept that height laid out in one
+  // row — an empty row's worth of space under the fields.
+  > .ui-grid {
+    inline-size: 100%;
+  }
+
   // And the fields a switch reveals sit close under it here too, as they do
   // in a stack (_layout.scss).
   > .ui-form-nested {

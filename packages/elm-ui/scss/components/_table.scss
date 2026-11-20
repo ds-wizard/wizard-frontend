@@ -100,14 +100,19 @@
 // the button it stays inside the row's height, and the table's width is to the
 // start side of the last column. An icon-only button draws its label itself
 // (`Button.withTooltip`, its `::after`), and it takes the same place. The gap
-// is `.ui-tooltip`'s, which a button's own label is not inside: without the
-// fallback the offset was invalid, and the label sat on the button.
+// is `.ui-tooltip`'s, which a button's own label is not inside, so the cell
+// sets it too: without it the offset was invalid, and the label sat on the
+// button. (Not as a `var()` fallback: a `calc()` there breaks the minifier.)
+.ui-table__actions {
+  --ui-tooltip-gap: calc(var(--ui-focus-offset) + var(--ui-focus-width) + var(--ui-space-1));
+}
+
 .ui-table__actions .ui-tooltip__bubble,
 .ui-table__actions .ui-button[data-ui-tooltip]::after {
   inset-block-start: 50%;
   inset-block-end: auto;
   inset-inline-start: auto;
-  inset-inline-end: calc(100% + var(--ui-tooltip-gap, calc(var(--ui-focus-offset) + var(--ui-focus-width) + var(--ui-space-1))));
+  inset-inline-end: calc(100% + var(--ui-tooltip-gap));
   translate: 0 -50%;
   text-align: start;
 }

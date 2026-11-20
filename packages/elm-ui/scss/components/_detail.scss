@@ -28,7 +28,9 @@
 
   grid-row: 1;
   grid-column: 1 / -1;
-  padding: var(--ui-space-5) var(--ui-page-gutter) 0;
+  // The same space above the title as a page's (`.ui-page`), so the title does
+  // not jump between a list and the detail it opens.
+  padding: var(--ui-space-7) var(--ui-page-gutter) 0;
   // Part of the page, not something on top of it — but opaque, because the
   // content scrolls under it.
   background: var(--ui-surface);
@@ -43,6 +45,9 @@
 .ui-detail__heading {
   display: grid;
   grid-template-columns: [title] minmax(0, 1fr);
+  // At least a button's height, as a page's heading row (_page.scss): the
+  // title stays where it is whether the page has actions or not.
+  grid-auto-rows: minmax(var(--ui-button-block-size), auto);
   align-items: center;
   column-gap: var(--ui-space-3);
   row-gap: var(--ui-space-3);

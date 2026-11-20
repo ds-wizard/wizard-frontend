@@ -6,6 +6,7 @@ module Ui.Chart exposing
     , line
     , radar
     , series
+    , seriesWithGaps
     , toHtml
     , withAxisTitles
     , withHiddenCaption
@@ -60,7 +61,7 @@ type Chart
 
 
 type Series
-    = Series { label : String, values : List Float }
+    = Series { label : String, values : List (Maybe Float) }
 
 
 {-| One line, bar or ring of numbers. Named, because the legend and the table
@@ -68,7 +69,16 @@ both need to call it something — and because a series with no name is a color,
 which is not a way to tell two of them apart (1.4.1).
 -}
 series : { label : String, values : List Float } -> Series
-series =
+series config =
+    Series { label = config.label, values = List.map Just config.values }
+
+
+{-| A series some of whose categories have no value — a day nothing was
+recorded on. A line breaks there rather than drawing through it, a bar is left
+out, and the table says the value is missing instead of inventing one.
+-}
+seriesWithGaps : { label : String, values : List (Maybe Float) } -> Series
+seriesWithGaps =
     Series
 
 
@@ -269,8 +279,9 @@ valueAt : Int -> Series -> String
 valueAt index (Series entry) =
     entry.values
         |> List.getAt index
+        |> Maybe.andThen identity
         |> Maybe.map String.fromFloat
-        |> Maybe.withDefault ""
+        |> Maybe.withDefault "—"
 
 
 encode : { a | categories : List String, series : List Series, range : Maybe { min : Float, max : Float } } -> Encode.Value
@@ -290,7 +301,7 @@ encode config =
                 (\(Series entry) ->
                     Encode.object
                         [ ( "label", Encode.string entry.label )
-                        , ( "values", Encode.list Encode.float entry.values )
+                        , ( "values", Encode.list (Maybe.withDefault Encode.null << Maybe.map Encode.float) entry.values )
                         ]
                 )
                 config.series

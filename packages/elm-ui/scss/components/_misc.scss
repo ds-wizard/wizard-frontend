@@ -305,6 +305,17 @@ hr.ui-separator {
   gap: var(--ui-space-2);
 }
 
+// The corner is the block's end, so a tooltip there (the copy button's) opens
+// back toward the start, as `Ui.Tooltip`'s end placement does: centered under
+// the button it reached past the block's edge, and a block that runs to the
+// edge of its container then made that container scroll sideways.
+.ui-code-block__actions .ui-tooltip__bubble {
+  inset-inline-start: auto;
+  inset-inline-end: 0;
+  translate: none;
+  text-align: start;
+}
+
 // CHART
 //
 // The element draws the picture; the caption names it and the table under it
