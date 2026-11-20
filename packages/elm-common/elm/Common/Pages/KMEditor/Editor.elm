@@ -19,9 +19,19 @@ from everybody else in it.
 **The protocol is the server's, exactly.** An edit becomes
 an event; the event is applied to the local store at once and sent over the
 socket; the server broadcasts it back to everybody including its author. An
-arriving action uuid that is on `savingActionUuids` is my own echo and is
+arriving action uuid that is waiting in the outbox is my own echo and is
 dropped; one that is not is somebody else's and is applied with `local = False`,
 which is what keeps a colleague's edit from moving my cursor.
+
+**A change is sent until its echo arrives.** The outbox
+(`Common.Api.WebSocket.Outbox`) sends what waits again when the socket opens
+again and when an echo is late, and the server stores a change sent twice once.
+A change still waiting after an hour is given up on, said so, and the editor is
+built again as the server has it. After a reconnect the server's broadcasts of
+the gap are lost, so the editor is loaded again and given every event it has not
+seen (`caughtUp`); when the history was squashed past the last event it saw, it
+is built again from what loaded, with my changes the server may not have yet on
+top.
 
 **Typing is debounced per entity**, squashed onto the last event for that
 entity, so a title typed a letter at a time is one event on the wire. Structural
@@ -73,7 +83,7 @@ import Common.Api.Models.TypeHint exposing (TypeHint)
 import Common.Api.Models.TypeHintRequest as TypeHintRequest
 import Common.Api.Models.TypeHintTestResponse exposing (TypeHintTestResponse)
 import Common.Api.Models.UrlCheckResponse exposing (UrlCheckResponse)
-import Common.Api.Models.WebSockets.ClientKnowledgeModelEditorMessage as ClientKnowledgeModelEditorMessage
+import Common.Api.Models.WebSockets.ClientKnowledgeModelEditorMessage as ClientKnowledgeModelEditorMessage exposing (ClientKnowledgeModelEditorMessage)
 import Common.Api.Models.WebSockets.KnowledgeModelEditorMessage.SetContentKnowledgeModelEditorMessage as SetContentKnowledgeModelEditorMessage exposing (SetContentKnowledgeModelEditorMessage)
 import Common.Api.Models.WebSockets.ServerKnowledgeModelEditorMessage as ServerKnowledgeModelEditorMessage
 import Common.Api.Models.WebSockets.WebSocketServerAction as WebSocketServerAction
@@ -82,6 +92,7 @@ import Common.Api.ServerError as ServerError exposing (ServerError)
 import Common.Api.TypeHints as TypeHintsApi
 import Common.Api.UrlCheck as UrlCheckApi
 import Common.Api.WebSocket as WebSocket exposing (WebSocket)
+import Common.Api.WebSocket.Outbox as Outbox exposing (Outbox)
 import Common.Components.ConfirmModal as ConfirmModal
 import Common.Components.DetailPage as DetailPage
 import Common.Components.Form as CommonForm
@@ -131,6 +142,7 @@ import Set
 import String.Format as String
 import Task
 import Task.Extra as Task
+import Time
 import Ui.Alert as Alert
 import Ui.Badge as Badge
 import Ui.Breadcrumbs as Breadcrumbs
@@ -142,6 +154,7 @@ import Ui.EditableTitle as EditableTitle
 import Ui.Field as Field
 import Ui.Icon as Icon
 import Ui.Illustration as Illustration
+import Ui.Layout as Layout
 import Ui.Link as Link
 import Ui.Menu as Menu
 import Ui.Modal as Modal
@@ -170,8 +183,16 @@ type alias Model =
     -- until the page is refreshed (`stale`); or a rename, which is put back.
     , saveError : Maybe SaveError
     , onlineUsers : List OnlineUserInfo
-    , savingActionUuids : List Uuid
+    , outbox : Outbox ClientKnowledgeModelEditorMessage
     , saving : SavingIndicator.Model
+
+    -- The last event the server sent, which a catch-up after a reconnect looks
+    -- for in what it loads: not there, the history was squashed past it.
+    , lastEventUuid : Maybe String
+
+    -- While the editor is loaded again after a reconnect: whether it is to be
+    -- built again from what loads, and the events others made meanwhile.
+    , catchingUp : Maybe { rebuild : Bool, held : List Event }
     , route : KMEditorRoute
     , editorContext : ActionResult EditorContext
     , integrationPrefabs : ActionResult (List Integration)
@@ -240,8 +261,10 @@ initialModel appState uuid mbEntityUuid =
     , title = EditableTitle.init
     , renamingFrom = Nothing
     , onlineUsers = []
-    , savingActionUuids = []
+    , outbox = Outbox.empty
     , saving = SavingIndicator.init
+    , lastEventUuid = Nothing
+    , catchingUp = Nothing
     , route = Edit Nothing
     , editorContext = Loading
     , integrationPrefabs = Loading
@@ -531,7 +554,7 @@ isGuarded appState nextRoute model =
     then
         Just (gettext "There are unsaved changes." appState.locale)
 
-    else if List.isEmpty model.savingActionUuids && Dict.isEmpty model.lastEvents then
+    else if Outbox.isEmpty model.outbox && Dict.isEmpty model.lastEvents then
         Nothing
 
     else if Routes.isKmEditorEditor model.uuid nextRoute then
@@ -556,8 +579,10 @@ type Msg
     | GotBuiltInLoaded String (Result ApiError E.Value)
     | GotSecrets (Result ApiError (List KnowledgeModelSecret))
     | WebSocketMsg WebSocket.RawMsg
-    | WebSocketPing
     | SavingIndicatorMsg SavingIndicator.Msg
+    | OutboxTick Time.Posix
+    | SaveNow
+    | CaughtUp (Result ApiError KnowledgeModelEditorDetail)
     | NavResizerMsg Resizer.Msg
     | AsideResizerMsg Resizer.Msg
     | SetPanel (Maybe Panels.Panel)
@@ -619,7 +644,7 @@ type Msg
     | AddEntity Tree.AddTo String
     | EventMsg Bool (Maybe String) String (Maybe String) EventContent
     | EventDebounceMsg String Debounce.Msg
-    | EventSent Uuid String
+    | EventSent SetContentKnowledgeModelEditorMessage String
 
 
 update : UpdateConfig Msg msg -> AppState -> Msg -> Model -> ( Seed, Model, Cmd msg )
@@ -645,6 +670,7 @@ update cfg appState msg model =
                                         (EditorContext.init kmEditor model.mbEntityUuid)
                                     )
                             , settingsForm = KnowledgeModelEditorEditForm.init appState kmEditor
+                            , lastEventUuid = Maybe.map .uuid (List.last kmEditor.events)
                           }
                         , Cmd.batch
                             [ Cmd.map cfg.wrapMsg
@@ -723,11 +749,68 @@ update cfg appState msg model =
         WebSocketMsg websocketMsg ->
             plain (handleWebSocketMsg appState websocketMsg model)
 
-        WebSocketPing ->
-            plain ( model, WebSocket.ping model.websocket )
-
         SavingIndicatorMsg savingMsg ->
             quiet { model | saving = SavingIndicator.update savingMsg model.saving }
+
+        OutboxTick now ->
+            if Outbox.expired now model.outbox then
+                -- Too late to send again: given up, and the editor is built
+                -- again as the server has it.
+                let
+                    ( caughtUpModel, catchUpCmd ) =
+                        catchUp appState
+                            True
+                            { model
+                                | outbox = Outbox.clear model.outbox
+                                , saving = SavingIndicator.init
+                                , saveError =
+                                    Just
+                                        { message = gettext "Some changes could not be saved because the connection was lost for too long." appState.locale
+                                        , details = []
+                                        , stale = False
+                                        }
+                            }
+                in
+                plain ( caughtUpModel, Cmd.batch [ catchUpCmd, Window.clearUnloadMessage () ] )
+
+            else
+                let
+                    ( outbox, resend ) =
+                        Outbox.tick now model.outbox
+                in
+                plain ( { model | outbox = outbox }, Cmd.batch (List.map (sendMessage model) resend) )
+
+        SaveNow ->
+            let
+                ( outbox, resend ) =
+                    Outbox.retry model.outbox
+            in
+            plain
+                ( { model | outbox = outbox }
+                , Cmd.batch (WebSocket.open appState model.websocket :: List.map (sendMessage model) resend)
+                )
+
+        CaughtUp result ->
+            case ( result, model.catchingUp ) of
+                ( Ok kmEditor, Just catching ) ->
+                    quiet (caughtUp appState kmEditor catching model)
+
+                ( Err _, _ ) ->
+                    ( appState.seed
+                    , { model
+                        | catchingUp = Nothing
+                        , saveError =
+                            Just
+                                { message = gettext "The knowledge model editor could not be brought up to date after the connection was restored." appState.locale
+                                , details = []
+                                , stale = True
+                                }
+                      }
+                    , RequestHelpers.getResultCmd cfg.logoutMsg result
+                    )
+
+                _ ->
+                    quiet { model | catchingUp = Nothing }
 
         NavResizerMsg resizerMsg ->
             quiet { model | navResizer = Resizer.update resizerMsg model.navResizer }
@@ -965,10 +1048,10 @@ update cfg appState msg model =
                                 }
                     in
                     ( seed
-                    , addSavingActionUuid actionUuid model
+                    , addSaving message model
                     , Cmd.map cfg.wrapMsg
                         (Cmd.batch
-                            [ WebSocket.send model.websocket (ClientKnowledgeModelEditorMessage.encode message)
+                            [ sendMessage model message
                             , Window.setUnloadMessage (gettext "Some changes are still saving." appState.locale)
                             ]
                         )
@@ -1253,9 +1336,8 @@ update cfg appState msg model =
             let
                 send message =
                     Cmd.batch
-                        [ WebSocket.send model.websocket
-                            (ClientKnowledgeModelEditorMessage.encode (ClientKnowledgeModelEditorMessage.SetContent message))
-                        , Task.dispatch (EventSent (SetContentKnowledgeModelEditorMessage.getUuid message) entityUuid)
+                        [ sendMessage model (ClientKnowledgeModelEditorMessage.SetContent message)
+                        , Task.dispatch (EventSent message entityUuid)
                         ]
 
                 ( debounce, cmd ) =
@@ -1266,10 +1348,10 @@ update cfg appState msg model =
             in
             plain ( { model | eventDebounces = Dict.insert entityUuid debounce model.eventDebounces }, cmd )
 
-        EventSent actionUuid entityUuid ->
+        EventSent message entityUuid ->
             -- The debounce has let it go: the squash target is spent, and the
             -- action is now something to wait for.
-            quiet (addSavingActionUuid actionUuid { model | lastEvents = Dict.remove entityUuid model.lastEvents })
+            quiet (addSaving (ClientKnowledgeModelEditorMessage.SetContent message) { model | lastEvents = Dict.remove entityUuid model.lastEvents })
 
 
 entityRoute : String -> Model -> Maybe Uuid
@@ -1374,14 +1456,13 @@ applyAndSend cfg appState shouldDebounce mbFocusSelector parentUuid mbEntityUuid
                     { uuid = actionUuid, event = event }
 
             sendCmd =
-                WebSocket.send model.websocket
-                    (ClientKnowledgeModelEditorMessage.encode (ClientKnowledgeModelEditorMessage.SetContent message))
+                sendMessage model (ClientKnowledgeModelEditorMessage.SetContent message)
 
             navigateCmd =
                 navigateToActive appState model.uuid model.editorContext editorContext
         in
         ( seed3
-        , addSavingActionUuid actionUuid { model | editorContext = editorContext }
+        , addSaving (ClientKnowledgeModelEditorMessage.SetContent message) { model | editorContext = editorContext }
         , Cmd.batch [ Cmd.map cfg.wrapMsg sendCmd, unloadCmd, navigateCmd, Cmd.map cfg.wrapMsg focusCmd ]
         )
 
@@ -1510,12 +1591,31 @@ setPreviewTags tags model =
             { model | previewTags = tags }
 
 
-addSavingActionUuid : Uuid -> Model -> Model
-addSavingActionUuid actionUuid model =
+{-| The message has been sent: it waits in the outbox for its echo.
+-}
+addSaving : ClientKnowledgeModelEditorMessage -> Model -> Model
+addSaving message model =
     { model
-        | savingActionUuids = actionUuid :: model.savingActionUuids
+        | outbox = Outbox.add (messageUuid message) message model.outbox
         , saving = SavingIndicator.saving
     }
+
+
+sendMessage : Model -> ClientKnowledgeModelEditorMessage -> Cmd msg
+sendMessage model message =
+    WebSocket.send model.websocket (ClientKnowledgeModelEditorMessage.encode message)
+
+
+{-| The uuid the message's echo, or an error about it, carries.
+-}
+messageUuid : ClientKnowledgeModelEditorMessage -> Uuid
+messageUuid message =
+    case message of
+        ClientKnowledgeModelEditorMessage.SetContent content ->
+            SetContentKnowledgeModelEditorMessage.getUuid content
+
+        ClientKnowledgeModelEditorMessage.SetReplies replies ->
+            replies.uuid
 
 
 debounceConfig : AppState -> String -> Debounce.Config Msg
@@ -1576,6 +1676,24 @@ addEvent addTo =
 
 handleWebSocketMsg : AppState -> WebSocket.RawMsg -> Model -> ( Model, Cmd Msg )
 handleWebSocketMsg appState websocketMsg model =
+    let
+        connected isReopen =
+            let
+                ( outbox, resend ) =
+                    Outbox.connected model.outbox
+
+                withOutbox =
+                    { model | outbox = outbox }
+
+                ( catchingUpModel, catchUpCmd ) =
+                    if isReopen then
+                        catchUp appState False withOutbox
+
+                    else
+                        ( withOutbox, Cmd.none )
+            in
+            ( catchingUpModel, Cmd.batch (catchUpCmd :: List.map (sendMessage model) resend) )
+    in
     case WebSocket.receive (WebSocketServerAction.decoder ServerKnowledgeModelEditorMessage.decoder) websocketMsg model.websocket of
         WebSocket.Message (WebSocketServerAction.Success message) ->
             case message of
@@ -1587,44 +1705,56 @@ handleWebSocketMsg appState websocketMsg model =
 
                 ServerKnowledgeModelEditorMessage.SetReplies data ->
                     let
-                        remaining =
-                            List.filter ((/=) data.uuid) model.savingActionUuids
-
-                        settled =
-                            List.member data.uuid model.savingActionUuids && List.isEmpty remaining
+                        ( settled, settleCmd ) =
+                            settle data.uuid model
                     in
-                    ( { model
-                        | savingActionUuids = remaining
-                        , editorContext = ActionResult.map (EditorContext.setReplies data.replies) model.editorContext
+                    ( { settled
+                        | editorContext = ActionResult.map (EditorContext.setReplies data.replies) model.editorContext
 
                         -- Also into the preview itself, so a save made by
                         -- somebody else shows in an open one rather than
                         -- waiting for the next entry into the tab appState.
                         , preview = Maybe.map (Questionnaire.setReplies data.replies) model.preview
-                        , saving =
-                            if settled then
-                                SavingIndicator.saved
-
-                            else
-                                model.saving
                       }
-                    , if settled then
-                        Window.clearUnloadMessage ()
-
-                      else
-                        Cmd.none
+                    , settleCmd
                     )
 
-        WebSocket.Message (WebSocketServerAction.Error serverError) ->
-            -- The error does not say which change it is about, so the changes
-            -- still waiting stay waiting; the indicator just stops saying
-            -- "Saving..." for one that is not coming.
+        WebSocket.Message (WebSocketServerAction.Error mbActionUuid serverError) ->
+            -- When the error names the change, that change is not coming and
+            -- waits no longer; one it does not name stays waiting, and is sent
+            -- again.
+            let
+                outbox =
+                    Maybe.unwrap model.outbox (\actionUuid -> Outbox.ack actionUuid model.outbox) mbActionUuid
+
+                settled =
+                    Outbox.isEmpty outbox && not (Outbox.isEmpty model.outbox)
+            in
             ( { model
                 | saveError = Just (saveErrorOf appState model serverError True)
-                , saving = SavingIndicator.init
+                , outbox = outbox
+                , saving =
+                    if settled then
+                        SavingIndicator.init
+
+                    else
+                        model.saving
               }
-            , Cmd.none
+            , if settled then
+                Window.clearUnloadMessage ()
+
+              else
+                Cmd.none
             )
+
+        WebSocket.Open ->
+            connected False
+
+        WebSocket.Reopen ->
+            connected True
+
+        WebSocket.Disconnected ->
+            ( { model | outbox = Outbox.disconnected model.outbox }, Cmd.none )
 
         WebSocket.Reconnect ->
             ( model, WebSocket.open appState model.websocket )
@@ -1634,6 +1764,148 @@ handleWebSocketMsg appState websocketMsg model =
 
         _ ->
             ( model, Cmd.none )
+
+
+{-| My change has been stored, if it was mine: it waits no longer, and once
+nothing does, the indicator says saved.
+-}
+settle : Uuid -> Model -> ( Model, Cmd Msg )
+settle actionUuid model =
+    if Outbox.member actionUuid model.outbox then
+        let
+            outbox =
+                Outbox.ack actionUuid model.outbox
+        in
+        if Outbox.isEmpty outbox then
+            ( { model | outbox = outbox, saving = SavingIndicator.saved }, Window.clearUnloadMessage () )
+
+        else
+            ( { model | outbox = outbox }, Cmd.none )
+
+    else
+        ( model, Cmd.none )
+
+
+{-| Load the editor again after the socket was down, when the server's
+broadcasts of the gap are lost (`caughtUp`). `rebuild` is whether it is built
+again from what loads rather than given only what it missed: after the outbox
+gave up on changes, which are in the editor and must not stay there.
+-}
+catchUp : AppState -> Bool -> Model -> ( Model, Cmd Msg )
+catchUp appState rebuild model =
+    if ActionResult.isSuccess model.editorContext then
+        ( { model | catchingUp = Just { rebuild = rebuild, held = [] } }
+        , KnowledgeModelEditorsApi.getKnowledgeModelEditor appState model.uuid CaughtUp
+        )
+
+    else
+        ( model, Cmd.none )
+
+
+{-| The editor as the server has it, after a reconnect.
+
+What the editor has not seen is applied, as if it had arrived over the socket:
+every event it does not have, in the server's order. That needs the server's
+history to reach back to the last event the editor saw; when the history has
+been squashed past it, or when the editor is to be built again anyway, it is
+built again from what loaded, with my changes the server may not have yet —
+waiting in the outbox, or still being typed — and the events that arrived
+while it loaded applied on top. Where the reader is (the entity open, the tree
+open) stays.
+
+-}
+caughtUp : AppState -> KnowledgeModelEditorDetail -> { rebuild : Bool, held : List Event } -> Model -> Model
+caughtUp appState kmEditor catching model =
+    case model.editorContext of
+        Success editorContext ->
+            let
+                warnings =
+                    EditorContext.computeWarnings { locale = appState.locale, builtIns = appState.extensions.integrations, secrets = secretNames model }
+
+                loadedUuids =
+                    Set.fromList (List.map .uuid kmEditor.events)
+
+                reachesBack =
+                    Maybe.unwrap True (\uuid -> Set.member uuid loadedUuids) model.lastEventUuid
+
+                -- The replies the preview saves, unless mine are on their way.
+                replies context =
+                    if List.any isSetReplies (Outbox.messages model.outbox) then
+                        context
+
+                    else
+                        EditorContext.setReplies kmEditor.replies context
+
+                refreshed =
+                    if reachesBack && not catching.rebuild then
+                        let
+                            seen =
+                                Set.fromList (List.map .uuid editorContext.kmEditor.events)
+                        in
+                        List.foldl (EditorContext.applyEvent False)
+                            editorContext
+                            (List.filter (\event -> not (Set.member event.uuid seen)) kmEditor.events)
+
+                    else
+                        let
+                            mine =
+                                List.filterMap pendingEvent (Outbox.messages model.outbox)
+                                    ++ Dict.values model.lastEvents
+
+                            held =
+                                List.filter (\event -> not (Set.member event.uuid loadedUuids)) catching.held
+
+                            rebuilt =
+                                EditorContext.init kmEditor model.mbEntityUuid
+                        in
+                        List.foldl (EditorContext.applyEvent False) rebuilt (mine ++ held)
+                            |> (\context -> { context | openNodeUuids = editorContext.openNodeUuids })
+            in
+            { model
+                | editorContext = Success (warnings (replies refreshed))
+                , preview =
+                    if List.any isSetReplies (Outbox.messages model.outbox) then
+                        model.preview
+
+                    else
+                        Maybe.map (Questionnaire.setReplies kmEditor.replies) model.preview
+                , lastEventUuid =
+                    case List.last kmEditor.events of
+                        Just event ->
+                            Just event.uuid
+
+                        Nothing ->
+                            model.lastEventUuid
+                , catchingUp = Nothing
+            }
+
+        _ ->
+            { model | catchingUp = Nothing }
+
+
+alreadyApplied : Event -> Model -> Bool
+alreadyApplied event model =
+    ActionResult.unwrap False (\editorContext -> List.any (\applied -> applied.uuid == event.uuid) editorContext.kmEditor.events) model.editorContext
+
+
+pendingEvent : ClientKnowledgeModelEditorMessage -> Maybe Event
+pendingEvent message =
+    case message of
+        ClientKnowledgeModelEditorMessage.SetContent (SetContentKnowledgeModelEditorMessage.AddKnowledgeModelEditorWebSocketEvent data) ->
+            Just data.event
+
+        ClientKnowledgeModelEditorMessage.SetReplies _ ->
+            Nothing
+
+
+isSetReplies : ClientKnowledgeModelEditorMessage -> Bool
+isSetReplies message =
+    case message of
+        ClientKnowledgeModelEditorMessage.SetReplies _ ->
+            True
+
+        ClientKnowledgeModelEditorMessage.SetContent _ ->
+            False
 
 
 {-| Why a change was refused: the server's words when it has them, a sentence of
@@ -1769,47 +2041,35 @@ entityKindToReadable appState kind =
 {-| The server broadcasts every event to everybody, its author included. An
 action uuid this client is waiting for is that echo: the change is already
 applied, so only the waiting ends. Anything else is somebody else's, and is
-applied without moving the cursor.
+applied without moving the cursor — and, while the editor is loaded again
+after a reconnect, kept to apply again should it be built again.
 -}
 receiveEvent : AppState -> { uuid : Uuid, event : Event } -> Model -> ( Model, Cmd Msg )
 receiveEvent appState data model =
     let
-        mine =
-            List.member data.uuid model.savingActionUuids
+        received =
+            { model | lastEventUuid = Just data.event.uuid }
+    in
+    if Outbox.member data.uuid model.outbox then
+        settle data.uuid received
 
-        remaining =
-            List.filter ((/=) data.uuid) model.savingActionUuids
+    else if Outbox.isSettled data.uuid model.outbox || alreadyApplied data.event model then
+        -- A second echo of my change, sent twice, or an event a catch-up
+        -- applied before its broadcast arrived.
+        ( received, Cmd.none )
 
-        editorContext =
-            if mine then
-                model.editorContext
-
-            else
+    else
+        ( { received
+            | editorContext =
                 ActionResult.map
                     (EditorContext.computeWarnings { locale = appState.locale, builtIns = appState.extensions.integrations, secrets = secretNames model }
                         << EditorContext.applyEvent False data.event
                     )
                     model.editorContext
-
-        settled =
-            mine && List.isEmpty remaining
-    in
-    ( { model
-        | savingActionUuids = remaining
-        , editorContext = editorContext
-        , saving =
-            if settled then
-                SavingIndicator.saved
-
-            else
-                model.saving
-      }
-    , if settled then
-        Window.clearUnloadMessage ()
-
-      else
-        Cmd.none
-    )
+            , catchingUp = Maybe.map (\catching -> { catching | held = catching.held ++ [ data.event ] }) model.catchingUp
+          }
+        , Cmd.none
+        )
 
 
 
@@ -1820,8 +2080,8 @@ subscriptions : AppState -> Model -> Sub Msg
 subscriptions appState model =
     Sub.batch
         [ WebSocket.listen WebSocketMsg
-        , WebSocket.schedulePing WebSocketPing
         , Sub.map SavingIndicatorMsg (SavingIndicator.subscriptions model.saving)
+        , Outbox.subscriptions OutboxTick model.outbox
         , Sub.map NavResizerMsg (Resizer.subscriptions model.navResizer)
         , Sub.map AsideResizerMsg (Resizer.subscriptions model.asideResizer)
         , Sub.map (TrailMenuMsg 0) (Menu.subscriptions trailMenuId model.trailMenu)
@@ -1884,6 +2144,21 @@ viewMessage appState heading line =
         )
 
 
+{-| Where my changes are, beside the people online — and, once saving has
+stalled, Save now beside it.
+-}
+savingIndicator : AppState -> Model -> Html Msg
+savingIndicator appState model =
+    let
+        outboxStatus =
+            Outbox.status model.outbox
+    in
+    Layout.inline
+        (SavingIndicator.toHtml appState outboxStatus model.saving
+            :: Maybe.toList (SavingIndicator.saveNowButton appState SaveNow outboxStatus)
+        )
+
+
 viewEditor : AppState -> KMEditorRoute -> Model -> EditorContext -> Html Msg
 viewEditor appState route model editorContext =
     DetailPage.toHtml
@@ -1913,7 +2188,7 @@ viewEditor appState route model editorContext =
                     identity
                )
             |> applyWhenJust (OnlineUsers.avatars appState model.onlineUsers) DetailPage.withActionsLeading
-            |> DetailPage.withHeaderAside (SavingIndicator.toHtml appState model.saving)
+            |> DetailPage.withHeaderAside (savingIndicator appState model)
             |> DetailPage.withActions
                 [ Button.primary (gettext "Publish" appState.locale) (SetPublishOpen True)
                     |> Button.withIcon (Icon.solid "fa-cloud-arrow-up")

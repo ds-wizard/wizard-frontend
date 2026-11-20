@@ -146,7 +146,17 @@ removeVersion version model =
 -}
 addEvent : ProjectEvent -> Model -> Model
 addEvent event model =
-    { model | events = ActionResult.map (\events -> events ++ [ event ]) model.events }
+    let
+        add events =
+            -- Once: a change applied again on top of the project as the server
+            -- has it, after the websocket was down, is the same change.
+            if List.any (\shown -> ProjectEvent.getUuid shown == ProjectEvent.getUuid event) events then
+                events
+
+            else
+                events ++ [ event ]
+    in
+    { model | events = ActionResult.map add model.events }
 
 
 

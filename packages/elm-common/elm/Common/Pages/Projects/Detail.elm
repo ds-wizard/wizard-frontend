@@ -48,6 +48,15 @@ else is here and what they changed. A change to the questionnaire (`SetContent`,
 the user's own changes are sent from it; the rest — the user list, a change to
 the project itself, being disconnected — are handled here.
 
+**A change is saving until its echo arrives, and is sent until it does.** Sent
+changes wait in an outbox (`Common.Api.WebSocket.Outbox`), which sends them again
+when the socket opens again and when an echo is late; the server stores a change
+sent twice once. A change still waiting after an hour is given up on, and said
+so. After a drop the server's broadcasts of the gap are lost, so the
+questionnaire is asked for again and replaces what is shown (`catchUp`,
+`Questionnaire.refresh`), with the replies, phase and labels the user set and
+the server may not have yet set again on top.
+
 -}
 
 import ActionResult exposing (ActionResult(..))
@@ -68,6 +77,7 @@ import Common.Api.Models.WebSockets.WebSocketServerAction as WebSocketServerActi
 import Common.Api.Projects as ProjectsApi
 import Common.Api.ServerError as ServerError
 import Common.Api.WebSocket as WebSocket exposing (WebSocket)
+import Common.Api.WebSocket.Outbox as Outbox exposing (Outbox)
 import Common.Components.ConfirmModal as ConfirmModal
 import Common.Components.DetailPage as DetailPage
 import Common.Components.ItemActions as ItemActions
@@ -115,6 +125,7 @@ import Maybe.Extra as Maybe
 import Random exposing (Seed)
 import String.Format as String
 import Task.Extra as Task
+import Time
 import Ui.Alert as Alert
 import Ui.Badge as Badge
 import Ui.Button as Button
@@ -139,9 +150,17 @@ type alias Model =
     , questionnaire : ActionResult ProjectQuestionnaire
     , questionnaireModel : ActionResult Questionnaire.Model
     , questionnaireLink : { path : Maybe String, commentThreadUuid : Maybe Uuid }
-    , savingEventUuids : List Uuid
+    , outbox : Outbox ProjectEvent
     , saving : SavingIndicator.Model
     , replyDebounces : Dict String (Debounce ProjectEvent)
+
+    -- The last reply typed in each question that typing has not let go yet:
+    -- already in the questionnaire, not yet in the outbox.
+    , typing : Dict String ProjectEvent
+
+    -- While the questionnaire is asked for again after a reconnect, the changes
+    -- other people make meanwhile, to apply again on top of it.
+    , catchingUp : Maybe (List ProjectEvent)
     , preview : ActionResult ProjectPreview
     , summaryReport : ActionResult SummaryReport
     , onlineUsers : List OnlineUserInfo
@@ -175,9 +194,11 @@ initialModel appState uuid =
     , questionnaire = Loading
     , questionnaireModel = Loading
     , questionnaireLink = { path = Nothing, commentThreadUuid = Nothing }
-    , savingEventUuids = []
+    , outbox = Outbox.empty
     , saving = SavingIndicator.init
     , replyDebounces = Dict.empty
+    , typing = Dict.empty
+    , catchingUp = Nothing
     , preview = Loading
     , summaryReport = Loading
     , onlineUsers = []
@@ -268,7 +289,6 @@ type Msg
     | GetSummaryReportCompleted (Result ApiError (ProjectDetailWrapper SummaryReport))
     | GetSettingsCompleted (Result ApiError (ProjectDetailWrapper ProjectSettings))
     | WebSocketMsg WebSocket.RawMsg
-    | WebSocketPing
     | ActionsMenuMsg Int Menu.Msg
     | ShareModalMsg ShareModal.Msg
     | OpenVersionView Uuid String
@@ -296,6 +316,9 @@ type Msg
     | ReplyDebounceMsg String Debounce.Msg
     | AddSavingEvent ProjectEvent
     | SavingIndicatorMsg SavingIndicator.Msg
+    | OutboxTick Time.Posix
+    | SaveNow
+    | CatchUpCompleted (Result ApiError (ProjectDetailWrapper ProjectQuestionnaire))
     | CloseSaveError
     | Refresh
 
@@ -399,7 +422,11 @@ updateQuestionnaire cfg appState questionnaireMsg model =
                             Debounce.push (replyDebounceConfig appState path) event (replyDebounce path newModel)
                     in
                     ( result.seed
-                    , { newModel | replyDebounces = Dict.insert path debounce newModel.replyDebounces, saving = SavingIndicator.saving }
+                    , { newModel
+                        | replyDebounces = Dict.insert path debounce newModel.replyDebounces
+                        , typing = Dict.insert path event newModel.typing
+                        , saving = SavingIndicator.saving
+                      }
                     , Cmd.batch [ result.cmd, Cmd.map cfg.wrapMsg debounceCmd, savingMessage ]
                     )
 
@@ -421,9 +448,20 @@ sendEvent model event =
     WebSocket.send model.websocket (ClientProjectMessage.encode (ClientProjectMessage.SetContent event))
 
 
+{-| The event has been sent: it waits in the outbox for its echo. A reply that
+typing let go is no longer being typed.
+-}
 addSaving : ProjectEvent -> Model -> Model
 addSaving event model =
-    { model | savingEventUuids = model.savingEventUuids ++ [ ProjectEvent.getUuid event ], saving = SavingIndicator.saving }
+    let
+        eventUuid =
+            ProjectEvent.getUuid event
+    in
+    { model
+        | outbox = Outbox.add eventUuid event model.outbox
+        , typing = Dict.filter (\_ typed -> ProjectEvent.getUuid typed /= eventUuid) model.typing
+        , saving = SavingIndicator.saving
+    }
 
 
 replyDebounceConfig : AppState -> String -> Debounce.Config Msg
@@ -575,7 +613,88 @@ updatePage cfg appState msg model =
                     setError result error
 
         WebSocketMsg websocketMsg ->
-            handleWebSocketMsg appState websocketMsg model
+            handleWebSocketMsg cfg appState websocketMsg model
+
+        OutboxTick now ->
+            if Outbox.expired now model.outbox then
+                -- Too late to send again: given up, and the questionnaire is
+                -- loaded as the server has it.
+                let
+                    ( caughtUp, catchUpCmd ) =
+                        catchUp cfg
+                            appState
+                            { model
+                                | outbox = Outbox.clear model.outbox
+                                , saving = SavingIndicator.init
+                                , saveError =
+                                    Just
+                                        { message = gettext "Some changes could not be saved because the connection was lost for too long." appState.locale
+                                        , details = []
+                                        , stale = False
+                                        }
+                            }
+                in
+                ( caughtUp, Cmd.batch [ catchUpCmd, Window.clearUnloadMessage () ] )
+
+            else
+                let
+                    ( outbox, resend ) =
+                        Outbox.tick now model.outbox
+                in
+                ( { model | outbox = outbox }, Cmd.batch (List.map (sendEvent model) resend) )
+
+        SaveNow ->
+            let
+                ( outbox, resend ) =
+                    Outbox.retry model.outbox
+            in
+            ( { model | outbox = outbox }
+            , Cmd.batch (WebSocket.open appState model.websocket :: List.map (sendEvent model) resend)
+            )
+
+        CatchUpCompleted result ->
+            case ( result, model.questionnaireModel ) of
+                ( Ok data, Success questionnaireModel ) ->
+                    let
+                        ( refreshed, refreshCmd ) =
+                            Questionnaire.refresh appState data.data questionnaireModel
+
+                        -- My changes the server may not have yet, and what
+                        -- others did since it was asked: the replies, phase and
+                        -- labels they set, which setting again does not
+                        -- double. A comment counted in the questionnaire as
+                        -- it arrived is left as the server counts it.
+                        again =
+                            List.filter isSetting
+                                (Outbox.messages model.outbox
+                                    ++ Dict.values model.typing
+                                    ++ Maybe.withDefault [] model.catchingUp
+                                )
+                    in
+                    ( { model
+                        | questionnaire = Success data.data
+                        , questionnaireModel = Success (List.foldl Questionnaire.applyProjectEvent refreshed again)
+                        , common = Success data.common
+                        , catchingUp = Nothing
+                      }
+                    , Cmd.map (cfg.wrapMsg << QuestionnaireMsg) refreshCmd
+                    )
+
+                ( Err _, _ ) ->
+                    ( { model
+                        | catchingUp = Nothing
+                        , saveError =
+                            Just
+                                { message = gettext "The project could not be brought up to date after the connection was restored." appState.locale
+                                , details = []
+                                , stale = True
+                                }
+                      }
+                    , RequestHelpers.getResultCmd cfg.logoutMsg result
+                    )
+
+                _ ->
+                    ( { model | catchingUp = Nothing }, Cmd.none )
 
         SavingIndicatorMsg savingMsg ->
             ( { model | saving = SavingIndicator.update savingMsg model.saving }, Cmd.none )
@@ -588,9 +707,6 @@ updatePage cfg appState msg model =
 
         AddSavingEvent event ->
             ( addSaving event model, Cmd.none )
-
-        WebSocketPing ->
-            ( model, WebSocket.ping model.websocket )
 
         ActionsMenuMsg count menuMsg ->
             let
@@ -877,10 +993,33 @@ projectLink appState uuid =
 
 {-| What the server says: who else is here, the project's data, a change to the
 questionnaire — ours coming back, which ends its saving, or somebody else's, which
-is applied — a file uploaded, or that the socket is done.
+is applied — a file uploaded, or what became of the socket.
+
+When the socket opens, whatever is waiting in the outbox goes. When it opens
+again after a drop, whatever the server sent meanwhile is lost, so the project
+is also asked for again (`catchUp`).
+
 -}
-handleWebSocketMsg : AppState -> WebSocket.RawMsg -> Model -> ( Model, Cmd msg )
-handleWebSocketMsg appState websocketMsg model =
+handleWebSocketMsg : UpdateConfig Msg msg -> AppState -> WebSocket.RawMsg -> Model -> ( Model, Cmd msg )
+handleWebSocketMsg cfg appState websocketMsg model =
+    let
+        connected isReopen =
+            let
+                ( outbox, resend ) =
+                    Outbox.connected model.outbox
+
+                withOutbox =
+                    { model | outbox = outbox }
+
+                ( caughtUp, catchUpCmd ) =
+                    if isReopen then
+                        catchUp cfg appState withOutbox
+
+                    else
+                        ( withOutbox, Cmd.none )
+            in
+            ( caughtUp, Cmd.batch (catchUpCmd :: List.map (sendEvent model) resend) )
+    in
     case WebSocket.receive (WebSocketServerAction.decoder ServerProjectMessage.decoder) websocketMsg model.websocket of
         WebSocket.Message serverAction ->
             case serverAction of
@@ -903,34 +1042,44 @@ handleWebSocketMsg appState websocketMsg model =
                                 eventUuid =
                                     ProjectEvent.getUuid event
                             in
-                            if List.member eventUuid model.savingEventUuids then
-                                let
-                                    remaining =
-                                        List.filter ((/=) eventUuid) model.savingEventUuids
-                                in
-                                if List.isEmpty remaining then
-                                    ( { model | savingEventUuids = [], saving = SavingIndicator.saved }, Window.clearUnloadMessage () )
+                            if Outbox.member eventUuid model.outbox then
+                                settle eventUuid model
 
-                                else
-                                    ( { model | savingEventUuids = remaining }, Cmd.none )
+                            else if Outbox.isSettled eventUuid model.outbox then
+                                -- A second echo of my change, sent twice.
+                                ( model, Cmd.none )
 
                             else
-                                ( { model | questionnaireModel = ActionResult.map (Questionnaire.applyProjectEvent event) model.questionnaireModel }
+                                ( { model
+                                    | questionnaireModel = ActionResult.map (Questionnaire.applyProjectEvent event) model.questionnaireModel
+                                    , catchingUp = Maybe.map (\held -> held ++ [ event ]) model.catchingUp
+                                  }
                                 , Cmd.none
                                 )
 
                         ServerProjectMessage.AddFile file ->
                             ( { model | questionnaireModel = ActionResult.map (Questionnaire.addFile file) model.questionnaireModel }, Cmd.none )
 
-                WebSocketServerAction.Error ((ServerError.UserSimpleError message) as serverError) ->
-                    if message.code == forceDisconnectCode then
-                        ( { model | forceDisconnect = True }, Cmd.none )
+                WebSocketServerAction.Error mbEventUuid serverError ->
+                    case serverError of
+                        ServerError.UserSimpleError message ->
+                            if message.code == forceDisconnectCode then
+                                ( { model | forceDisconnect = True }, Cmd.none )
 
-                    else
-                        ( savingFailed appState serverError model, Cmd.none )
+                            else
+                                savingFailed appState mbEventUuid serverError model
 
-                WebSocketServerAction.Error serverError ->
-                    ( savingFailed appState serverError model, Cmd.none )
+                        _ ->
+                            savingFailed appState mbEventUuid serverError model
+
+        WebSocket.Open ->
+            connected False
+
+        WebSocket.Reopen ->
+            connected True
+
+        WebSocket.Disconnected ->
+            ( { model | outbox = Outbox.disconnected model.outbox }, Cmd.none )
 
         WebSocket.Reconnect ->
             ( model, WebSocket.open appState model.websocket )
@@ -940,6 +1089,59 @@ handleWebSocketMsg appState websocketMsg model =
 
         _ ->
             ( model, Cmd.none )
+
+
+{-| My change has been stored: it waits no longer, and once nothing does, the
+indicator says saved.
+-}
+settle : Uuid -> Model -> ( Model, Cmd msg )
+settle eventUuid model =
+    let
+        outbox =
+            Outbox.ack eventUuid model.outbox
+    in
+    if Outbox.isEmpty outbox then
+        ( { model | outbox = outbox, saving = SavingIndicator.saved }, Window.clearUnloadMessage () )
+
+    else
+        ( { model | outbox = outbox }, Cmd.none )
+
+
+{-| Ask for the project again after the socket was down: the questionnaire when
+it is here (its response brings the header too), the header otherwise — the
+other tabs load theirs whenever they are entered.
+-}
+catchUp : UpdateConfig Msg msg -> AppState -> Model -> ( Model, Cmd msg )
+catchUp cfg appState model =
+    if ActionResult.isSuccess model.questionnaireModel then
+        ( { model | catchingUp = Just [] }
+        , ProjectsApi.getQuestionnaire appState model.uuid (cfg.wrapMsg << CatchUpCompleted)
+        )
+
+    else
+        ( model, ProjectsApi.get appState model.uuid (cfg.wrapMsg << GetCommonCompleted) )
+
+
+{-| A change that sets a value, and so can be set again without counting
+twice.
+-}
+isSetting : ProjectEvent -> Bool
+isSetting event =
+    case event of
+        ProjectEvent.SetReply _ ->
+            True
+
+        ProjectEvent.ClearReply _ ->
+            True
+
+        ProjectEvent.SetPhase _ ->
+            True
+
+        ProjectEvent.SetLabels _ ->
+            True
+
+        _ ->
+            False
 
 
 forceDisconnectCode : String
@@ -958,17 +1160,36 @@ type alias SaveError =
     }
 
 
-{-| The server refused a change sent over the socket. It does not say which
-one, so the changes still waiting stay waiting; the indicator just stops saying
-"Saving..." for one that is not coming. The questionnaire stays on the screen,
-to be looked at or copied, with the error in a dialog over it.
+{-| The server refused a change sent over the socket. When it says which one,
+that change is not coming and waits no longer; one it does not name stays
+waiting, and is sent again. The questionnaire stays on the screen, to be looked
+at or copied, with the error in a dialog over it.
 -}
-savingFailed : AppState -> ServerError.ServerError -> Model -> Model
-savingFailed appState serverError model =
-    { model
+savingFailed : AppState -> Maybe Uuid -> ServerError.ServerError -> Model -> ( Model, Cmd msg )
+savingFailed appState mbEventUuid serverError model =
+    let
+        outbox =
+            Maybe.unwrap model.outbox (\eventUuid -> Outbox.ack eventUuid model.outbox) mbEventUuid
+
+        settled =
+            Outbox.isEmpty outbox && not (Outbox.isEmpty model.outbox)
+    in
+    ( { model
         | saveError = Just (saveErrorOf appState True (gettext "The change could not be saved." appState.locale) serverError)
-        , saving = SavingIndicator.init
-    }
+        , outbox = outbox
+        , saving =
+            if settled then
+                SavingIndicator.init
+
+            else
+                model.saving
+      }
+    , if settled then
+        Window.clearUnloadMessage ()
+
+      else
+        Cmd.none
+    )
 
 
 {-| A request that failed. A refused one says why in its body, which is read
@@ -1042,11 +1263,11 @@ subscriptions : AppState -> ProjectDetailRoute -> Model -> Sub Msg
 subscriptions appState route model =
     Sub.batch
         [ WebSocket.listen WebSocketMsg
-        , WebSocket.schedulePing WebSocketPing
         , Sub.map (ActionsMenuMsg 0) (Menu.subscriptions actionsMenuId model.actionsMenu)
         , Sub.map ShareModalMsg (ShareModal.subscriptions model.shareModal)
         , Sub.map VersionViewModalMsg (VersionViewModal.subscriptions model.versionViewModal)
         , Sub.map SavingIndicatorMsg (SavingIndicator.subscriptions model.saving)
+        , Outbox.subscriptions OutboxTick model.outbox
         , case route of
             ProjectDetailRoute.Questionnaire _ _ ->
                 case model.questionnaireModel of
@@ -1093,7 +1314,7 @@ isGuarded appState route mbNextRoute model =
     in
     -- Saving covers a reply still waiting for typing to pause, before it is
     -- sent: leaving then would lose it.
-    if (SavingIndicator.isSaving model.saving || not (List.isEmpty model.savingEventUuids)) && not stayingOnProject then
+    if (SavingIndicator.isSaving model.saving || not (Outbox.isEmpty model.outbox)) && not stayingOnProject then
         Just (gettext "Some changes are still saving." appState.locale)
 
     else
@@ -1431,16 +1652,23 @@ withOnlineUsers appState model detailPage =
 
 
 {-| Where the user's changes to the questionnaire are, beside the people online:
-saving, saved a moment ago, or all saved. A status, said politely as it changes,
-and never a control — the header's line belongs to the heading. Shown to whoever
-can change the questionnaire, once it is loaded.
+saving, saved a moment ago, or all saved — or late, not getting through, or
+waiting for the connection. A status, said politely as it changes, and never a
+control — the header's line belongs to the heading; when saving has stalled, Save
+now is a button of its own beside it. Shown to whoever can change the
+questionnaire, once it is loaded.
 -}
 savingIndicator : AppState -> Model -> List (Html Msg)
 savingIndicator appState model =
     case ( model.questionnaireModel, model.common ) of
         ( Success _, Success common ) ->
             if ProjectUtils.isEditor appState common then
-                [ SavingIndicator.toHtml appState model.saving ]
+                let
+                    outboxStatus =
+                        Outbox.status model.outbox
+                in
+                SavingIndicator.toHtml appState outboxStatus model.saving
+                    :: Maybe.toList (SavingIndicator.saveNowButton appState SaveNow outboxStatus)
 
             else
                 []

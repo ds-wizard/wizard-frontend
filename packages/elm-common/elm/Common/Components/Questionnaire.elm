@@ -11,6 +11,7 @@ module Common.Components.Questionnaire exposing
     , navToggle
     , openChapterMsg
     , openCommentsMsg
+    , refresh
     , restoreScrollMsg
     , scrollToPathMsg
     , setFiles
@@ -1410,6 +1411,40 @@ updateWithQuestionnaireData data model =
     in
     { model | commentsCount = ProjectQuestionnaire.commentsLength questionnaire }
         |> setQuestionnaire questionnaire
+
+
+{-| The questionnaire as the server has it now, after the websocket was down
+and missed what others did meanwhile: replaced under the reader, who stays where
+they were — the chapter, what is collapsed, the open panel — with the open
+panel's own data asked for again (a question's threads, the version history).
+-}
+refresh : AppState -> ProjectQuestionnaire -> Model -> ( Model, Cmd Msg )
+refresh appState questionnaire model =
+    let
+        refreshed =
+            setQuestionnaire questionnaire
+                { model
+                    | knowledgeModelParentMap = KnowledgeModel.createParentMap questionnaire.knowledgeModel
+                    , chapterUnansweredCounts = Rebuild.chapterUnansweredCounts questionnaire
+                    , todos = ProjectQuestionnaire.getTodos questionnaire
+                    , warnings = ProjectQuestionnaire.getWarnings questionnaire
+                    , unanswered = Maybe.map (\_ -> ProjectQuestionnaire.getUnansweredQuestions questionnaire) model.unanswered
+                    , commentsCount = ProjectQuestionnaire.commentsLength questionnaire
+                    , commentInfos = Maybe.map (\_ -> ProjectQuestionnaire.getComments questionnaire) model.commentInfos
+                }
+                |> rebuild
+    in
+    ( refreshed
+    , case refreshed.rightPanel of
+        RightPanel.Comments path ->
+            fetchThreads appState path refreshed
+
+        RightPanel.VersionHistory ->
+            dispatchMsg (VersionHistoryMsg VersionHistory.initMsg)
+
+        _ ->
+            Cmd.none
+    )
 
 
 {-| The project's sharing after the share dialog saved it.

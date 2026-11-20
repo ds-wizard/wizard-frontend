@@ -75,13 +75,17 @@
 // Where the user's changes to the questionnaire are, in the project's header
 // (`Common.Pages.Projects.Detail.savingIndicator`): "Saving…", "Saved", or a quiet
 // check once everything has arrived. Muted and small — it reports, it does not
-// ask for anything.
+// ask for anything. Changes that are not getting through are the exception:
+// that is said in the danger color, beside the button that saves them now.
 .c-project-saving {
   display: inline-flex;
   align-items: center;
   gap: var(--ui-space-2);
   color: var(--ui-text-muted);
   font-size: var(--ui-text-label);
+}
+.c-project-saving--problem {
+  color: var(--ui-danger-on-subtle);
 }
 
 // A tab a plugin adds to a project (`Common.Pages.Projects.Detail`).

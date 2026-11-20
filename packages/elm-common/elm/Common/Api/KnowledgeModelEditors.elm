@@ -84,6 +84,7 @@ deleteKnowledgeModelEditor appState uuid =
 websocket : Uuid -> WebSocket
 websocket uuid =
     WebSocket.init ("/knowledge-model-editors/" ++ Uuid.toString uuid ++ "/websocket")
+        |> WebSocket.withHeartbeat
 
 
 getMigration : Context ctx -> Uuid -> ToMsg KnowledgeModelMigration msg -> Cmd msg

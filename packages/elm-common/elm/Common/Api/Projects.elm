@@ -228,6 +228,7 @@ getSummaryReport appState projectUuid =
 websocket : Uuid -> WebSocket
 websocket projectUuid =
     WebSocket.init ("/projects/" ++ Uuid.toString projectUuid ++ "/websocket")
+        |> WebSocket.withHeartbeat
 
 
 getDocumentPreview : Context ctx -> Uuid -> ToMsg ( Http.Metadata, Maybe UrlResponse ) msg -> Cmd msg

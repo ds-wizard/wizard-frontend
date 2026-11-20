@@ -3,6 +3,7 @@ module Common.Components.SavingIndicator exposing
     , Msg
     , init
     , isSaving
+    , saveNowButton
     , saved
     , saving
     , subscriptions
@@ -25,12 +26,22 @@ lands the indicator says so in words; after that it is a tick with its meaning
 in a tooltip and a visually hidden phrase, because a permanent "Saved" beside a
 heading reads as a button that failed.
 
+**Trouble outranks the rest.** What the page's outbox says (`Outbox.Status`)
+comes first: a change that is late and being sent again ("Not saved,
+retrying..."), one that is not getting through ("Changes not saved"), or a
+socket that is down with nothing waiting ("Reconnecting..."). Only when there
+is none does the indicator say where the changes are. "Changes not saved" is
+the one state with something to do about it, and that is a button of its own
+beside the indicator (`saveNowButton`), not the indicator itself.
+
 -}
 
+import Common.Api.WebSocket.Outbox as Outbox
 import Gettext exposing (gettext)
 import Html exposing (Html, span, text)
 import Html.Attributes exposing (attribute, class)
 import Time
+import Ui.Button as Button
 import Ui.Icon as Icon
 import Ui.TestId as TestId
 import Ui.Text as Text
@@ -107,37 +118,69 @@ subscriptions model =
             Sub.none
 
 
-toHtml : { a | locale : Gettext.Locale } -> Model -> Html msg
-toHtml appState model =
+toHtml : { a | locale : Gettext.Locale } -> Outbox.Status -> Model -> Html msg
+toHtml appState outboxStatus model =
     let
-        -- What the indicator shows, for a test to wait on without its words.
-        state =
+        indicator state problem content =
+            span
+                [ class "c-project-saving"
+                , Html.Attributes.classList [ ( "c-project-saving--problem", problem ) ]
+                , attribute "role" "status"
+                , TestId.attribute "saving-indicator"
+
+                -- What the indicator shows, for a test to wait on without its
+                -- words.
+                , attribute "data-state" state
+                ]
+                content
+    in
+    case outboxStatus of
+        Outbox.Stalled ->
+            indicator "stalled"
+                True
+                [ Icon.toHtml (Icon.solid "fa-triangle-exclamation"), text (gettext "Changes not saved" appState.locale) ]
+
+        Outbox.Retrying ->
+            indicator "retrying"
+                False
+                [ Icon.toHtml Icon.spinner, text (gettext "Not saved, retrying..." appState.locale) ]
+
+        Outbox.Reconnecting ->
+            indicator "reconnecting"
+                False
+                [ Icon.toHtml Icon.spinner, text (gettext "Reconnecting..." appState.locale) ]
+
+        _ ->
             case model of
                 Saving ->
-                    "saving"
+                    indicator "saving" False [ Icon.toHtml Icon.spinner, text (gettext "Saving..." appState.locale) ]
 
                 SavedRecently _ ->
-                    "saved"
+                    indicator "saved" False [ Icon.toHtml (Icon.solid "fa-check"), text (gettext "Saved" appState.locale) ]
 
                 AllSaved ->
-                    "all-saved"
-    in
-    span
-        [ class "c-project-saving"
-        , attribute "role" "status"
-        , TestId.attribute "saving-indicator"
-        , attribute "data-state" state
-        ]
-        (case model of
-            Saving ->
-                [ Icon.toHtml Icon.spinner, text (gettext "Saving..." appState.locale) ]
+                    indicator "all-saved"
+                        False
+                        [ Tooltip.view { label = gettext "All changes have been saved" appState.locale, placement = Tooltip.Below }
+                            (span [] [ Icon.toHtml (Icon.solid "fa-check") ])
+                        , Text.visuallyHiddenInline (gettext "All changes have been saved" appState.locale)
+                        ]
 
-            SavedRecently _ ->
-                [ Icon.toHtml (Icon.solid "fa-check"), text (gettext "Saved" appState.locale) ]
 
-            AllSaved ->
-                [ Tooltip.view { label = gettext "All changes have been saved" appState.locale, placement = Tooltip.Below }
-                    (span [] [ Icon.toHtml (Icon.solid "fa-check") ])
-                , Text.visuallyHiddenInline (gettext "All changes have been saved" appState.locale)
-                ]
-        )
+{-| Save now, beside the indicator once saving has stalled — and only then:
+before that, waiting is what fixes it, and a button offered for every slow
+moment teaches nobody anything.
+-}
+saveNowButton : { a | locale : Gettext.Locale } -> msg -> Outbox.Status -> Maybe (Html msg)
+saveNowButton appState msg outboxStatus =
+    if outboxStatus == Outbox.Stalled then
+        Just
+            (Button.secondary (gettext "Save now" appState.locale) msg
+                |> Button.withIcon (Icon.solid "fa-rotate")
+                |> Button.small
+                |> Button.withTestId "saving-indicator_save-now"
+                |> Button.toHtml
+            )
+
+    else
+        Nothing
