@@ -406,14 +406,23 @@ validateOAuth =
             )
 
 
+{-| A submission added in the form starts with empty fields, while the selects
+show their first option: an empty resource type, license or access is the
+default (the first option of the select, the license the hint names).
+-}
 validateZenodoTarget : Validation FormError ZenodoTargetConfig
 validateZenodoTarget =
     V.succeed ZenodoTargetConfig
         |> V.andMap (V.field "repository" V.string)
-        |> V.andMap (V.field "resourceType" V.string)
-        |> V.andMap (V.field "licenseId" V.string)
-        |> V.andMap (V.field "accessLevel" V.string)
+        |> V.andMap (V.field "resourceType" (stringOrDefault defaultZenodoTarget.resourceType))
+        |> V.andMap (V.field "licenseId" (stringOrDefault defaultZenodoTarget.licenseId))
+        |> V.andMap (V.field "accessLevel" (stringOrDefault defaultZenodoTarget.accessLevel))
         |> V.andMap (V.field "community" V.maybeString)
+
+
+stringOrDefault : String -> Validation FormError String
+stringOrDefault default =
+    V.oneOf [ V.emptyString |> V.map (always default), V.string ]
 
 
 validateRequest : Validation FormError Request
