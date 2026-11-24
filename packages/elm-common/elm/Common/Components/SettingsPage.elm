@@ -16,6 +16,7 @@ module Common.Components.SettingsPage exposing
     , moveItemUp
     , setOverrideAllowed
     , subscriptions
+    , toFormMsg
     , update
     , view
     )
@@ -281,6 +282,18 @@ setOverrideAllowed =
 formMsg : Form.Msg -> Msg value
 formMsg =
     FormMsg
+
+
+{-| The form message a message carries, if it is one.
+-}
+toFormMsg : Msg value -> Maybe Form.Msg
+toFormMsg msg =
+    case msg of
+        FormMsg formMsgValue ->
+            Just formMsgValue
+
+        _ ->
+            Nothing
 
 
 {-| Move an item of a form list one place up: the list's name, the names of the

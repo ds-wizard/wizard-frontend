@@ -1,12 +1,12 @@
 module Common.Api.Models.Settings.SubmissionSettings exposing
     ( Definition
     , Export
+    , HttpTargetConfig
     , Multipart
     , OAuth
     , Request
     , SubmissionSettings
     , Target(..)
-    , HttpTargetConfig
     , ZenodoTargetConfig
     , accessLevelOptions
     , decoder
@@ -341,8 +341,26 @@ validation =
         |> V.andMap (V.field "definitions" (V.list validateDefinition))
 
 
+{-| Only Zenodo uses an export as the maDMP metadata; the checkbox is hidden for
+the other targets, so whatever it kept from before is dropped.
+-}
 validateDefinition : Validation FormError Definition
 validateDefinition =
+    V.map dropMadmpMetadataUnlessZenodo validateDefinitionFields
+
+
+dropMadmpMetadataUnlessZenodo : Definition -> Definition
+dropMadmpMetadataUnlessZenodo definition =
+    case definition.target of
+        ZenodoTarget _ ->
+            definition
+
+        HttpTarget _ ->
+            { definition | exports = List.map (\export -> { export | madmpMetadata = False }) definition.exports }
+
+
+validateDefinitionFields : Validation FormError Definition
+validateDefinitionFields =
     V.succeed Definition
         |> V.andMap (V.field "id" V.string)
         |> V.andMap (V.field "name" V.string)

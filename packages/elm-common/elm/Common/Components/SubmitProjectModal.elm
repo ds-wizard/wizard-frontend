@@ -31,9 +31,9 @@ import Browser.Navigation as Navigation
 import Common.Api.ApiError as ApiError exposing (ApiError)
 import Common.Api.Models.AvailableSubmission as AvailableSubmission exposing (AvailableSubmission)
 import Common.Api.Models.Document.DocumentState exposing (DocumentState(..))
+import Common.Api.Models.OAuthConnection exposing (OAuthAuthorization)
 import Common.Api.Models.Submission as Submission exposing (Submission)
 import Common.Api.Models.Submission.SubmissionState as SubmissionState
-import Common.Api.Models.OAuthConnection exposing (OAuthAuthorization)
 import Common.Api.OAuthConnections as OAuthConnectionsApi
 import Common.Api.ProjectSubmissions as ProjectSubmissionsApi
 import Common.Components.GuideLink as GuideLink
@@ -148,24 +148,30 @@ update cfg appState msg model =
                     ( model, Cmd.none )
 
                 ( Just projectUuid, Just definitionId, _ ) ->
-                    case connectFirst model of
-                        Just provider ->
-                            -- The service needs an account the user has not
-                            -- connected: connect it first, the server submits once
-                            -- connected and the user comes back to the documents.
-                            ( { model | submission = Loading }
-                            , OAuthConnectionsApi.authorize appState
-                                { provider = provider
-                                , returnUrl = Just (Routes.toUrl appState (Routes.projectsDetailDocuments projectUuid))
-                                , pendingSubmission = Just { projectUuid = projectUuid, definitionId = definitionId }
-                                }
-                                (cfg.wrapMsg << ConnectAndSubmitCompleted)
-                            )
+                    if mustConnectInProfile model then
+                        -- Submitting cannot go on before the account is connected
+                        -- in the profile, which the dialog tells.
+                        ( model, Cmd.none )
 
-                        Nothing ->
-                            ( { model | submission = Loading }
-                            , ProjectSubmissionsApi.postSubmission appState projectUuid definitionId (cfg.wrapMsg << SubmitCompleted)
-                            )
+                    else
+                        case connectFirst model of
+                            Just provider ->
+                                -- The service needs an account the user has not
+                                -- connected: connect it first, the server submits once
+                                -- connected and the user comes back to the documents.
+                                ( { model | submission = Loading }
+                                , OAuthConnectionsApi.authorize appState
+                                    { provider = provider
+                                    , returnUrl = Just (Routes.toUrl appState (Routes.projectsDetailDocuments projectUuid))
+                                    , pendingSubmission = Just { projectUuid = projectUuid, definitionId = definitionId }
+                                    }
+                                    (cfg.wrapMsg << ConnectAndSubmitCompleted)
+                                )
+
+                            Nothing ->
+                                ( { model | submission = Loading }
+                                , ProjectSubmissionsApi.postSubmission appState projectUuid definitionId (cfg.wrapMsg << SubmitCompleted)
+                                )
 
                 _ ->
                     ( model, Cmd.none )
@@ -190,11 +196,15 @@ update cfg appState msg model =
                     ( newModel, cmd )
 
         ConnectAndSubmitCompleted result ->
-            case result of
-                Ok authorization ->
+            case ( result, model.projectUuid ) of
+                ( Ok authorization, Just _ ) ->
                     ( model, Navigation.load authorization.url )
 
-                Err error ->
+                ( Ok _, Nothing ) ->
+                    -- The dialog was closed meanwhile: the submission is cancelled.
+                    ( model, Cmd.none )
+
+                ( Err error, _ ) ->
                     ( { model | submission = ApiError.toActionResult appState (gettext "Unable to connect the account." appState.locale) error }
                     , RequestHelpers.getResultCmd cfg.logoutMsg result
                     )
@@ -208,17 +218,22 @@ update cfg appState msg model =
                     ( model, Cmd.none )
 
         PollCompleted result ->
-            case ( result, model.projectUuid ) of
-                ( Ok submission, Just _ ) ->
-                    ( { model | submission = Success submission }
-                    , if submission.state /= SubmissionState.InProgress then
-                        Task.dispatch (cfg.submittedMsg submission)
+            case ( result, model.projectUuid, model.submission ) of
+                ( Ok submission, Just _, Success followed ) ->
+                    if submission.uuid == followed.uuid then
+                        ( { model | submission = Success submission }
+                        , if submission.state /= SubmissionState.InProgress then
+                            Task.dispatch (cfg.submittedMsg submission)
 
-                      else
-                        Cmd.none
-                    )
+                          else
+                            Cmd.none
+                        )
 
-                ( Err _, _ ) ->
+                    else
+                        -- A late answer for a submission no longer followed.
+                        ( model, Cmd.none )
+
+                ( Err _, _, _ ) ->
                     -- A failed poll is retried by the next one.
                     ( model, RequestHelpers.getResultCmd cfg.logoutMsg result )
 
@@ -250,6 +265,16 @@ connectFirst model =
                 else
                     Nothing
             )
+
+
+{-| The selected submission needs an account the user has not connected, and it
+is not connected when submitting: the user has to connect it in their profile.
+-}
+mustConnectInProfile : Model -> Bool
+mustConnectInProfile model =
+    selectedSubmission model
+        |> Maybe.map (\submission -> submission.requiresConnection && not submission.connectOnSubmit)
+        |> Maybe.withDefault False
 
 
 subscriptions : Model -> Sub Msg
@@ -295,6 +320,7 @@ view appState model =
                             gettext "Submit" appState.locale
                         )
                         |> Button.withLoading submitting
+                        |> Button.withDisabled (mustConnectInProfile model)
                     ]
 
                 _ ->

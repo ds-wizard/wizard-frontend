@@ -24,6 +24,7 @@ import Common.Utils.Form.FormError exposing (FormError)
 import Common.Utils.HttpMethod as HttpMethod
 import Common.Utils.RequestHelpers as RequestHelpers
 import Form exposing (Form)
+import Form.Field as FormField
 import Gettext exposing (gettext)
 import Html exposing (Html)
 import List.Extra as List
@@ -69,20 +70,27 @@ update : UpdateConfig Msg msg -> AppState -> Msg -> Model -> ( Model, Cmd msg )
 update cfg appState msg model =
     case msg of
         GenericMsg genericMsg ->
-            let
-                ( genericModel, cmd ) =
-                    SettingsPage.update appState
-                        { wrapMsg = cfg.wrapMsg << GenericMsg
-                        , logoutMsg = cfg.logoutMsg
-                        , section = SubmissionSettings.section
-                        , initForm = SubmissionSettings.initForm
-                        , formToValue = \form _ -> form
-                        , formValidation = SubmissionSettings.validation
-                        }
-                        genericMsg
-                        model.genericModel
-            in
-            ( { model | genericModel = genericModel }, cmd )
+            case SettingsPage.toFormMsg genericMsg of
+                Just (Form.Append "definitions") ->
+                    -- A new submission connects the account when submitting by
+                    -- default, as a configuration without the field does.
+                    let
+                        index =
+                            List.length (Form.getListIndexes "definitions" model.genericModel.form)
+
+                        connectOnSubmit =
+                            Form.Input ("definitions." ++ String.fromInt index ++ ".connectOnSubmit") Form.Checkbox (FormField.Bool True)
+
+                        ( appendedModel, appendCmd ) =
+                            updateGeneric cfg appState genericMsg model
+
+                        ( newModel, inputCmd ) =
+                            updateGeneric cfg appState (SettingsPage.formMsg connectOnSubmit) appendedModel
+                    in
+                    ( newModel, Cmd.batch [ appendCmd, inputCmd ] )
+
+                _ ->
+                    updateGeneric cfg appState genericMsg model
 
         GetTemplatesCompleted result ->
             RequestHelpers.applyResult
@@ -93,6 +101,24 @@ update cfg appState msg model =
                 , logoutMsg = cfg.logoutMsg
                 , locale = appState.locale
                 }
+
+
+updateGeneric : UpdateConfig Msg msg -> AppState -> SettingsPage.Msg SubmissionSettings -> Model -> ( Model, Cmd msg )
+updateGeneric cfg appState genericMsg model =
+    let
+        ( genericModel, cmd ) =
+            SettingsPage.update appState
+                { wrapMsg = cfg.wrapMsg << GenericMsg
+                , logoutMsg = cfg.logoutMsg
+                , section = SubmissionSettings.section
+                , initForm = SubmissionSettings.initForm
+                , formToValue = \form _ -> form
+                , formValidation = SubmissionSettings.validation
+                }
+                genericMsg
+                model.genericModel
+    in
+    ( { model | genericModel = genericModel }, cmd )
 
 
 subscriptions : AppState -> Model -> Sub Msg

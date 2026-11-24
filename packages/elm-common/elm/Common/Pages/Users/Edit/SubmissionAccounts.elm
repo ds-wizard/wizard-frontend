@@ -151,8 +151,9 @@ update cfg appState msg model =
                     case ( callbackResult.returnUrl, callbackResult.submissionError ) of
                         ( Just returnUrl, Nothing ) ->
                             -- Started by a submission that is now on its way:
-                            -- back to where it was started.
-                            ( model, Navigation.pushUrl appState.key returnUrl )
+                            -- back to where it was started. The callback address
+                            -- is replaced, so going back does not use the code again.
+                            ( model, Navigation.replaceUrl appState.key returnUrl )
 
                         ( mReturnUrl, Just submissionError ) ->
                             ( { model

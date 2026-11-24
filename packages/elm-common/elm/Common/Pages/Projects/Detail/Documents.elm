@@ -66,6 +66,7 @@ import String.Format as String
 import Task
 import Task.Extra as Task
 import Time
+import Ui.Alert as Alert
 import Ui.Badge as Badge
 import Ui.Button as Button
 import Ui.CodeBlock as CodeBlock
@@ -509,7 +510,6 @@ listingItem appState project document =
         -- the current one.
         versionFragment =
             Maybe.map (Badge.toHtml << Badge.neutral) document.projectVersion
-
     in
     { row
         | icon = Just (ItemIcon.toHtml (UserAvatar.item document.name Nothing))
@@ -618,20 +618,27 @@ submitButtonId =
 
 
 {-| The project's submissions, newest first, above the documents; nothing while
-there are none (or submission is not enabled).
+there are none (or submission is not enabled), an error when they could not be
+loaded.
 -}
 viewSubmissions : AppState -> Model -> List (Html Msg)
 viewSubmissions appState model =
-    case List.sortWith Submission.compare (ActionResult.withDefault [] model.submissions) of
-        [] ->
+    case ActionResult.map (List.sortWith Submission.compare) model.submissions of
+        Error message ->
+            [ Alert.toHtml (Alert.danger message) ]
+
+        Success [] ->
             []
 
-        submissions ->
+        Success submissions ->
             [ Layout.stack
                 (Text.subtitle (gettext "Submissions" appState.locale)
                     :: List.map (viewSubmission appState) submissions
                 )
             ]
+
+        _ ->
+            []
 
 
 {-| A submission of the project: which submission, how it went (with how far the
