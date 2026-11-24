@@ -57,6 +57,7 @@ import Common.Pages.Settings.RoleDetail as RoleDetail
 import Common.Pages.Settings.Roles as Roles
 import Common.Pages.Settings.Routes as SettingsRoutes exposing (LocalesPage(..), Route(..))
 import Common.Pages.Settings.Submission as Submission
+import Common.Pages.Settings.Zenodo as Zenodo
 import Common.Pages.Settings.Support as Support
 import Common.Pages.Settings.Usage as Usage
 import Common.Pages.Settings.Users as Users
@@ -120,6 +121,7 @@ type alias Model =
     , dashboardAndMenuModel : DashboardAndMenu.Model
     , lookAndFeelModel : LookAndFeel.Model
     , registryModel : Registry.Model
+    , zenodoModel : Zenodo.Model
     , projectsModel : Projects.Model
     , submissionModel : Submission.Model
     , usageModel : Usage.Model
@@ -146,6 +148,7 @@ type Msg
     | DashboardAndMenuMsg DashboardAndMenu.Msg
     | LookAndFeelMsg LookAndFeel.Msg
     | RegistryMsg Registry.Msg
+    | ZenodoMsg Zenodo.Msg
     | ProjectsMsg Projects.Msg
     | SubmissionMsg Submission.Msg
     | UsageMsg Usage.Msg
@@ -172,6 +175,7 @@ initialModel appState =
     , dashboardAndMenuModel = DashboardAndMenu.initialModel
     , lookAndFeelModel = LookAndFeel.initialModel
     , registryModel = Registry.initialModel
+    , zenodoModel = Zenodo.initialModel
     , projectsModel = Projects.initialModel appState
     , submissionModel = Submission.initialModel
     , usageModel = Usage.initialModel
@@ -231,6 +235,9 @@ init appState model route =
 
         RegistryRoute ->
             Tuple.mapBoth (\m -> { model | registryModel = m }) (Cmd.map RegistryMsg) (Registry.init appState)
+
+        ZenodoRoute ->
+            Tuple.mapBoth (\m -> { model | zenodoModel = m }) (Cmd.map ZenodoMsg) (Zenodo.init appState)
 
         ProjectsRoute ->
             Tuple.mapBoth (\m -> { model | projectsModel = m }) (Cmd.map ProjectsMsg) (Projects.init appState)
@@ -323,6 +330,10 @@ update cfg appState msg model =
                 Tuple.mapFirst (\m -> { model | registryModel = m }) <|
                     Registry.update (UpdateConfig.map RegistryMsg cfg) appState subMsg model.registryModel
 
+            ZenodoMsg subMsg ->
+                Tuple.mapFirst (\m -> { model | zenodoModel = m }) <|
+                    Zenodo.update (UpdateConfig.map ZenodoMsg cfg) appState subMsg model.zenodoModel
+
             ProjectsMsg subMsg ->
                 Tuple.mapFirst (\m -> { model | projectsModel = m }) <|
                     Projects.update (UpdateConfig.map ProjectsMsg cfg) appState subMsg model.projectsModel
@@ -392,6 +403,9 @@ subscriptions appState route model =
 
         RegistryRoute ->
             Sub.map RegistryMsg (Registry.subscriptions appState model.registryModel)
+
+        ZenodoRoute ->
+            Sub.map ZenodoMsg (Zenodo.subscriptions appState model.zenodoModel)
 
         ProjectsRoute ->
             Sub.map ProjectsMsg (Projects.subscriptions appState model.projectsModel)
@@ -463,6 +477,9 @@ view mount appState route model =
 
                 RegistryRoute ->
                     mapSection RegistryMsg (Registry.view appState model.registryModel)
+
+                ZenodoRoute ->
+                    mapSection ZenodoMsg (Zenodo.view appState model.zenodoModel)
 
                 ProjectsRoute ->
                     mapSection ProjectsMsg (Projects.view appState model.projectsModel)
@@ -641,6 +658,7 @@ navigationAt mount appState active =
                     else
                         []
                    )
+                ++ [ ( ZenodoRoute, "Zenodo", is ZenodoRoute ) ]
 
         translationsLinks =
             [ ( LocalesRoute UiLocales LocalesListPage, gettext "Application" appState.locale, isLocales UiLocales )
@@ -697,6 +715,9 @@ isGuarded appState route model =
 
         RegistryRoute ->
             Registry.isGuarded appState model.registryModel
+
+        ZenodoRoute ->
+            Zenodo.isGuarded appState model.zenodoModel
 
         ProjectsRoute ->
             Projects.isGuarded appState model.projectsModel

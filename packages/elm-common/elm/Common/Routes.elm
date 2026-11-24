@@ -110,6 +110,7 @@ module Common.Routes exposing
     , settingsOpenIdDetail
     , settingsPluginSettings
     , settingsRegistry
+    , settingsZenodo
     , settingsRoleCreate
     , settingsRoleDetail
     , settingsRoles
@@ -136,6 +137,7 @@ module Common.Routes exposing
     , usersEditPassword
     , usersEditPluginSettings
     , usersEditSubmissionSettings
+    , usersEditSubmissionAccounts
     , usersEditTours
     , usersIndex
     , usersIndexWithFilters
@@ -1019,6 +1021,11 @@ settingsRegistry =
     SettingsRoute Common.Pages.Settings.Routes.RegistryRoute
 
 
+settingsZenodo : Route
+settingsZenodo =
+    SettingsRoute Common.Pages.Settings.Routes.ZenodoRoute
+
+
 settingsPluginSettings : Uuid -> Route
 settingsPluginSettings pluginUuid =
     SettingsRoute (Common.Pages.Settings.Routes.PluginSettingsRoute pluginUuid)
@@ -1114,6 +1121,11 @@ usersEditActiveSessions =
 usersEditSubmissionSettings : UuidOrCurrent -> Route
 usersEditSubmissionSettings =
     UsersRoute << flip Common.Pages.Users.Routes.EditRoute UserEditRoute.SubmissionSettings
+
+
+usersEditSubmissionAccounts : UuidOrCurrent -> Route
+usersEditSubmissionAccounts uuidOrCurrent =
+    UsersRoute (Common.Pages.Users.Routes.EditRoute uuidOrCurrent (UserEditRoute.SubmissionAccounts Nothing Nothing Nothing))
 
 
 usersEditPluginSettings : UuidOrCurrent -> Uuid -> Route

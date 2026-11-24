@@ -12,8 +12,9 @@ module Common.Pages.Projects.Detail.Documents exposing
 be done with each one.
 
 The same list as `Common.Pages.Documents.Index` narrowed to this project, so it is
-built the same way and out of the same parts — the row actions, the submit
-dialog and the plugin dialog are shared. What is different is where it sits: it
+built the same way and out of the same parts — the row actions and the plugin
+dialog are shared. Above the list are the project's submissions, and the toolbar
+submits the project (`Common.Components.SubmitProjectModal`). What is different is where it sits: it
 is a region of the project's page rather than a page, so it has no `h1` of its
 own (`Listing.viewWithinPageWith`) and it is the project, not a filter, that
 says which documents these are.
@@ -21,6 +22,7 @@ says which documents these are.
 Documents are generated in the background, so while any document on the page is
 queued or in progress the list is asked for again every second, without the
 loading state and without closing an open menu (`Listing.reloadBackground`).
+Submissions in progress are asked for again every three seconds.
 
 -}
 
@@ -34,6 +36,7 @@ import Common.Api.Models.ProjectCommon exposing (ProjectCommon)
 import Common.Api.Models.Submission as Submission exposing (Submission)
 import Common.Api.Models.Submission.SubmissionState as SubmissionState
 import Common.Api.Models.UrlResponse exposing (UrlResponse)
+import Common.Api.ProjectSubmissions as ProjectSubmissionsApi
 import Common.Api.Projects as ProjectsApi
 import Common.Components.ConfirmModal as ConfirmModal
 import Common.Components.DocumentPluginActions as DocumentPluginActions
@@ -41,7 +44,7 @@ import Common.Components.EntityCard as EntityCard
 import Common.Components.ItemActions as ItemActions
 import Common.Components.Listing as Listing
 import Common.Components.PluginModal as PluginModal
-import Common.Components.SubmitDocumentModal as SubmitDocumentModal
+import Common.Components.SubmitProjectModal as SubmitProjectModal
 import Common.Components.Timestamp as Timestamp
 import Common.Components.UserAvatar as UserAvatar
 import Common.Data.AppState exposing (AppState)
@@ -71,6 +74,7 @@ import Ui.ItemIcon as ItemIcon
 import Ui.Layout as Layout
 import Ui.Link as Link
 import Ui.Modal as Modal
+import Ui.Text as Text
 import Uuid exposing (Uuid)
 import Version
 
@@ -83,7 +87,8 @@ type alias Model =
     { documents : Listing.Model Document
     , documentToBeDeleted : Maybe Document
     , deletingDocument : ActionResult ()
-    , submitModal : SubmitDocumentModal.Model
+    , submitModal : SubmitProjectModal.Model
+    , submissions : ActionResult (List Submission)
     , documentErrorModal : Maybe String
     , submissionErrorModal : Maybe String
     , pluginModal : PluginModal.Model Document
@@ -96,7 +101,8 @@ initialModel =
     { documents = Listing.initialModel PaginationQueryString.empty
     , documentToBeDeleted = Nothing
     , deletingDocument = Unset
-    , submitModal = SubmitDocumentModal.initialModel
+    , submitModal = SubmitProjectModal.initialModel
+    , submissions = Unset
     , documentErrorModal = Nothing
     , submissionErrorModal = Nothing
     , pluginModal = PluginModal.initialModel
@@ -104,13 +110,28 @@ initialModel =
     }
 
 
-init : PaginationQueryString -> ( Model, Cmd Msg )
-init pqs =
+init : AppState -> Uuid -> PaginationQueryString -> ( Model, Cmd Msg )
+init appState projectUuid pqs =
     let
         ( documents, cmd ) =
             Listing.init pqs PaginationQueryFilters.empty
+
+        ( submissions, submissionsCmd ) =
+            if appState.config.submission.enabled && Session.exists appState.session then
+                ( Loading, ProjectSubmissionsApi.getSubmissions appState projectUuid GetSubmissionsCompleted )
+
+            else
+                ( Unset, Cmd.none )
     in
-    ( { initialModel | documents = documents }, Cmd.map ListingMsg cmd )
+    ( { initialModel | documents = documents, submissions = submissions }
+    , Cmd.batch [ Cmd.map ListingMsg cmd, submissionsCmd ]
+    )
+
+
+anySubmissionInProgress : Model -> Bool
+anySubmissionInProgress model =
+    ActionResult.withDefault [] model.submissions
+        |> List.any (\submission -> submission.state == SubmissionState.InProgress)
 
 
 anyDocumentInProgress : Model -> Bool
@@ -128,8 +149,10 @@ type Msg
     | ShowHideDeleteDocument (Maybe Document)
     | DeleteDocument
     | DeleteDocumentCompleted (Result ApiError ())
-    | SubmitModalMsg SubmitDocumentModal.Msg
-    | DocumentSubmitted Submission
+    | SubmitModalMsg SubmitProjectModal.Msg
+    | ProjectSubmitted Submission
+    | ReloadSubmissions
+    | GetSubmissionsCompleted (Result ApiError (List Submission))
     | SetDocumentErrorModal (Maybe String)
     | SetSubmissionErrorModal (Maybe String)
     | DownloadDocument Document
@@ -193,11 +216,11 @@ update cfg page appState projectUuid msg model =
         SubmitModalMsg modalMsg ->
             let
                 ( submitModal, cmd ) =
-                    SubmitDocumentModal.update
+                    SubmitProjectModal.update
                         { wrapMsg = cfg.wrapMsg << SubmitModalMsg
                         , logoutMsg = cfg.logoutMsg
-                        , submittedMsg = cfg.wrapMsg << DocumentSubmitted
-                        , closeCmd = focusRowActions cfg
+                        , submittedMsg = cfg.wrapMsg << ProjectSubmitted
+                        , closeCmd = Task.attempt (always (cfg.wrapMsg NoOp)) (Dom.focus submitButtonId)
                         }
                         appState
                         modalMsg
@@ -205,16 +228,33 @@ update cfg page appState projectUuid msg model =
             in
             ( { model | submitModal = submitModal }, cmd )
 
-        DocumentSubmitted submission ->
-            let
-                addSubmission document =
-                    if submission.documentUuid == document.uuid then
-                        { document | submissions = submission :: document.submissions }
+        ProjectSubmitted _ ->
+            -- The submission generates documents the list then shows, and the
+            -- submissions are asked for to show the new one.
+            ( model
+            , Cmd.batch
+                [ ProjectSubmissionsApi.getSubmissions appState projectUuid (cfg.wrapMsg << GetSubmissionsCompleted)
+                , Task.dispatch (cfg.wrapMsg (ListingMsg Listing.reloadBackground))
+                ]
+            )
 
-                    else
-                        document
-            in
-            ( { model | documents = Listing.updateItems addSubmission model.documents }, Cmd.none )
+        ReloadSubmissions ->
+            ( model, ProjectSubmissionsApi.getSubmissions appState projectUuid (cfg.wrapMsg << GetSubmissionsCompleted) )
+
+        GetSubmissionsCompleted result ->
+            case result of
+                Ok submissions ->
+                    ( { model | submissions = Success submissions }, Cmd.none )
+
+                Err error ->
+                    -- A failed reload keeps what is shown.
+                    ( if ActionResult.isSuccess model.submissions then
+                        model
+
+                      else
+                        { model | submissions = ApiError.toActionResult appState (gettext "Unable to get submissions." appState.locale) error }
+                    , RequestHelpers.getResultCmd cfg.logoutMsg result
+                    )
 
         SetDocumentErrorModal mbError ->
             ( { model | documentErrorModal = mbError }
@@ -316,6 +356,12 @@ subscriptions model =
 
           else
             Sub.none
+        , if anySubmissionInProgress model then
+            Time.every 3000 (\_ -> ReloadSubmissions)
+
+          else
+            Sub.none
+        , Sub.map SubmitModalMsg (SubmitProjectModal.subscriptions model.submitModal)
         , Sub.map ListingMsg (Listing.subscriptions model.documents)
         ]
 
@@ -327,10 +373,10 @@ subscriptions model =
 view : AppState -> ProjectCommon -> Model -> Html Msg
 view appState project model =
     Listing.viewWithinPageWith appState
-        { notices = []
+        { notices = viewSubmissions appState model
         , overlays =
             [ deleteModal appState model
-            , Html.map SubmitModalMsg (SubmitDocumentModal.view appState model.submitModal)
+            , Html.map SubmitModalMsg (SubmitProjectModal.view appState model.submitModal)
             , errorModal appState
                 { title = gettext "Document error" appState.locale
                 , testId = "document-error"
@@ -368,15 +414,26 @@ listingConfig appState project =
     , description = Nothing
     , breadcrumbs = Nothing
     , toolbarActions =
-        if canCreate appState project then
-            [ Button.linkPrimary (gettext "New document" appState.locale)
-                (Routes.toUrl appState (Routes.projectsDetailDocumentsNew project.uuid Nothing))
-                |> Button.withIcon (Icon.solid "fa-plus")
-                |> Button.withTestId "project-documents_new-document-button"
+        (if Feature.projectSubmit appState project then
+            [ Button.secondary (gettext "Submit" appState.locale) (SubmitModalMsg (SubmitProjectModal.open project.uuid))
+                |> Button.withIcon (Icon.solid "fa-paper-plane")
+                |> Button.withId submitButtonId
+                |> Button.withTestId "project-documents_submit-button"
             ]
 
-        else
+         else
             []
+        )
+            ++ (if canCreate appState project then
+                    [ Button.linkPrimary (gettext "New document" appState.locale)
+                        (Routes.toUrl appState (Routes.projectsDetailDocumentsNew project.uuid Nothing))
+                        |> Button.withIcon (Icon.solid "fa-plus")
+                        |> Button.withTestId "project-documents_new-document-button"
+                    ]
+
+                else
+                    []
+               )
     , searchPlaceholder = gettext "Search documents..." appState.locale
     , sortOptions =
         [ ( "name", gettext "Name" appState.locale )
@@ -453,13 +510,6 @@ listingItem appState project document =
         versionFragment =
             Maybe.map (Badge.toHtml << Badge.neutral) document.projectVersion
 
-        submissionsDetail =
-            case List.sortWith Submission.compare document.submissions of
-                [] ->
-                    Nothing
-
-                submissions ->
-                    Just (Layout.stack (List.map (viewSubmission appState) submissions))
     in
     { row
         | icon = Just (ItemIcon.toHtml (UserAvatar.item document.name Nothing))
@@ -472,7 +522,6 @@ listingItem appState project document =
                 , documentTemplateFragment
                 , versionFragment
                 ]
-        , detail = submissionsDetail
         , timestamp = Just (Timestamp.created appState document.createdAt)
         , actions = listingActions appState project document
     }
@@ -506,14 +555,6 @@ listingActions appState project document =
                 }
                 |> ItemActions.withTestId "listing-item_action_download"
 
-        submit =
-            ItemActions.action
-                { icon = Icon.solid "fa-paper-plane"
-                , label = gettext "Submit" appState.locale
-                , onSelect = RowAction document.uuid (SubmitModalMsg (SubmitDocumentModal.open document))
-                }
-                |> ItemActions.withTestId "listing-item_action_submit"
-
         viewError =
             ItemActions.action
                 { icon = Icon.solid "fa-circle-exclamation"
@@ -542,9 +583,7 @@ listingActions appState project document =
                 |> ItemActions.withTestId "listing-item_action_delete"
     in
     ItemActions.groups
-        [ [ ( download, Feature.documentDownload document )
-          , ( submit, Feature.projectDocumentSubmit appState project document )
-          ]
+        [ [ ( download, Feature.documentDownload document ) ]
         , [ ( viewError, Maybe.isJust document.workerLog && document.state == ErrorDocumentState ) ]
         , case document.projectEventUuid of
             Just eventUuid ->
@@ -573,8 +612,31 @@ stateBadge appState state =
             Just (Badge.danger (gettext "Error" appState.locale))
 
 
-{-| A submission of the document: to which service, how it went, a way to see
-the result, and when.
+submitButtonId : String
+submitButtonId =
+    "project-documents-submit"
+
+
+{-| The project's submissions, newest first, above the documents; nothing while
+there are none (or submission is not enabled).
+-}
+viewSubmissions : AppState -> Model -> List (Html Msg)
+viewSubmissions appState model =
+    case List.sortWith Submission.compare (ActionResult.withDefault [] model.submissions) of
+        [] ->
+            []
+
+        submissions ->
+            [ Layout.stack
+                (Text.subtitle (gettext "Submissions" appState.locale)
+                    :: List.map (viewSubmission appState) submissions
+                )
+            ]
+
+
+{-| A submission of the project: which submission, how it went (with how far the
+generation of its documents is while it is in progress), a way to see the
+result, and when.
 -}
 viewSubmission : AppState -> Submission -> Html Msg
 viewSubmission appState submission =
@@ -582,7 +644,7 @@ viewSubmission appState submission =
         stateBadge_ =
             case submission.state of
                 SubmissionState.InProgress ->
-                    Badge.info (gettext "Submitting" appState.locale)
+                    Badge.info (gettext "In Progress" appState.locale)
 
                 SubmissionState.Done ->
                     Badge.success (gettext "Submitted" appState.locale)
@@ -610,6 +672,19 @@ viewSubmission appState submission =
                 _ ->
                     []
     in
+    let
+        documentsDone =
+            List.length (List.filter ((==) DoneDocumentState << .state) submission.documents)
+
+        progress =
+            if submission.state == SubmissionState.InProgress && documentsDone < List.length submission.documents then
+                [ text " "
+                , text (String.format (gettext "(%s of %s documents generated)" appState.locale) [ String.fromInt documentsDone, String.fromInt (List.length submission.documents) ])
+                ]
+
+            else
+                []
+    in
     span []
         ([ text (Submission.visibleName submission)
          , text " "
@@ -617,6 +692,7 @@ viewSubmission appState submission =
          , text " "
          , Timestamp.view appState submission.updatedAt
          ]
+            ++ progress
             ++ link
         )
 

@@ -31,6 +31,7 @@ import Common.Pages.Users.Edit.PluginSettings as PluginSettings
 import Common.Pages.Users.Edit.Profile as Profile
 import Common.Pages.Users.Edit.Routes as UserEditRoute exposing (UserEditRoute)
 import Common.Pages.Users.Edit.SubmissionSettings as SubmissionSettings
+import Common.Pages.Users.Edit.SubmissionAccounts as SubmissionAccounts
 import Common.Pages.Users.Edit.Tours as Tours
 import Common.Routes as Routes
 import Common.Utils.RequestHelpers as RequestHelpers
@@ -55,6 +56,7 @@ type alias Model =
     , apiKeysModel : ApiKeys.Model
     , activeSessionsModel : ActiveSessions.Model
     , submissionSettingsModel : SubmissionSettings.Model
+    , submissionAccountsModel : SubmissionAccounts.Model
     , pluginSettingsModel : PluginSettings.Model
     }
 
@@ -71,6 +73,7 @@ initialModel appState uuidOrCurrent =
     , apiKeysModel = ApiKeys.initialModel uuidOrCurrent
     , activeSessionsModel = ActiveSessions.initialModel
     , submissionSettingsModel = SubmissionSettings.initialModel
+    , submissionAccountsModel = SubmissionAccounts.initialModel
     , pluginSettingsModel = PluginSettings.initialModel uuidOrCurrent Uuid.nil
     }
 
@@ -106,6 +109,9 @@ init appState uuidOrCurrent subroute model =
 
                 UserEditRoute.SubmissionSettings ->
                     { model | submissionSettingsModel = SubmissionSettings.initialModel }
+
+                UserEditRoute.SubmissionAccounts code state error ->
+                    { model | submissionAccountsModel = SubmissionAccounts.initModel appState { code = code, state = state, error = error } }
 
                 UserEditRoute.PluginSettings pluginUuid ->
                     { model | pluginSettingsModel = PluginSettings.initialModel uuidOrCurrent pluginUuid }
@@ -145,6 +151,9 @@ fetchSubrouteData appState uuidOrCurrent subroute =
         UserEditRoute.SubmissionSettings ->
             Cmd.map SubmissionSettingsMsg (SubmissionSettings.fetchData appState)
 
+        UserEditRoute.SubmissionAccounts code state error ->
+            Cmd.map SubmissionAccountsMsg (SubmissionAccounts.fetchData appState { code = code, state = state, error = error })
+
         UserEditRoute.PluginSettings pluginUuid ->
             Cmd.map PluginSettingsMsg (PluginSettings.fetchData appState pluginUuid)
 
@@ -163,6 +172,7 @@ type Msg
     | ApiKeysMsg ApiKeys.Msg
     | ActiveSessionsMsg ActiveSessions.Msg
     | SubmissionSettingsMsg SubmissionSettings.Msg
+    | SubmissionAccountsMsg SubmissionAccounts.Msg
     | PluginSettingsMsg PluginSettings.Msg
 
 
@@ -245,6 +255,13 @@ update cfg appState msg model =
                     SubmissionSettings.update (UpdateConfig.map SubmissionSettingsMsg cfg) appState subMsg model.submissionSettingsModel
             in
             ( { model | submissionSettingsModel = subModel }, cmd )
+
+        SubmissionAccountsMsg subMsg ->
+            let
+                ( subModel, cmd ) =
+                    SubmissionAccounts.update (UpdateConfig.map SubmissionAccountsMsg cfg) appState subMsg model.submissionAccountsModel
+            in
+            ( { model | submissionAccountsModel = subModel }, cmd )
 
         PluginSettingsMsg subMsg ->
             let
@@ -331,6 +348,9 @@ userView appState subroute model =
                     ( mapBody SubmissionSettingsMsg (SubmissionSettings.view appState model.submissionSettingsModel)
                     , Maybe.map (Html.map SubmissionSettingsMsg) (SubmissionSettings.footer appState model.submissionSettingsModel)
                     )
+
+                UserEditRoute.SubmissionAccounts _ _ _ ->
+                    ( mapBody SubmissionAccountsMsg (SubmissionAccounts.view appState model.submissionAccountsModel), Nothing )
 
                 UserEditRoute.PluginSettings _ ->
                     ( mapBody PluginSettingsMsg (PluginSettings.view appState model.pluginSettingsModel)
@@ -420,6 +440,10 @@ navigationGroups appState uuidOrCurrent activeSection =
                 , ( ( Feature.userEditSubmissionSettings appState uuidOrCurrent, "submission-settings" )
                   , gettext "Submission Settings" appState.locale
                   , ( Routes.usersEditSubmissionSettings uuidOrCurrent, UserEditRoute.SubmissionSettings )
+                  )
+                , ( ( Feature.userEditSubmissionAccounts appState uuidOrCurrent, "submission-accounts" )
+                  , gettext "Submission Accounts" appState.locale
+                  , ( Routes.usersEditSubmissionAccounts uuidOrCurrent, UserEditRoute.SubmissionAccounts Nothing Nothing Nothing )
                   )
                 ]
                 ++ List.filterMap clientItem appState.userSettingsLinks

@@ -329,6 +329,9 @@ pageName appState route =
                     SettingsRoutes.RegistryRoute ->
                         gettext "Registry" l
 
+                    SettingsRoutes.ZenodoRoute ->
+                        "Zenodo"
+
                     SettingsRoutes.ProjectsRoute ->
                         gettext "Projects" l
 
@@ -397,6 +400,9 @@ pageName appState route =
 
                             UserEditRoutes.SubmissionSettings ->
                                 gettext "Submission Settings" l
+
+                            UserEditRoutes.SubmissionAccounts _ _ _ ->
+                                gettext "Submission Accounts" l
 
                             UserEditRoutes.PluginSettings _ ->
                                 gettext "Plugin settings" l

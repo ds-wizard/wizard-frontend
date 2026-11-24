@@ -16,7 +16,7 @@ import Common.Api.Models.DocumentTemplateAllSuggestion as DocumentTemplateAllSug
 import Common.Api.Models.Settings.SubmissionSettings as SubmissionSettings exposing (SubmissionSettings)
 import Common.Components.Form.Field as Field
 import Common.Components.SettingsPage as SettingsPage
-import Common.Data.AppState exposing (AppState)
+import Common.Data.AppState as AppState exposing (AppState)
 import Common.Data.GuideLinks as GuideLinks
 import Common.Data.UpdateConfig exposing (UpdateConfig)
 import Common.Pages.Settings.Components.Section as Section
@@ -27,6 +27,7 @@ import Form exposing (Form)
 import Gettext exposing (gettext)
 import Html exposing (Html)
 import List.Extra as List
+import String.Format as String
 import Ui.Form as UiForm
 import Ui.Layout as Layout
 import Version
@@ -215,6 +216,10 @@ definitionFormView appState templates form index =
         |> Field.toHtml
     ]
         ++ targetInput
+        ++ [ Field.checkbox appState form (field "connectOnSubmit") (gettext "Connect the account when submitting" appState.locale)
+                |> Field.withHint (gettext "When the target needs an account the user has not connected yet (Zenodo, an HTTP service with OAuth), submitting first asks the user to connect it and then submits. Otherwise, the user is told to connect it in their profile." appState.locale)
+                |> Field.toHtml
+           ]
 
 
 httpTargetFormView : AppState -> Form FormError SubmissionSettings -> String -> Html Form.Msg
@@ -238,7 +243,54 @@ httpTargetFormView appState form prefix =
                     ]
             }
         , requestFormView appState form (prefix ++ ".request")
+        , oauthFormView appState form (prefix ++ ".oauth")
         ]
+
+
+{-| The optional OAuth 2.0 authorization of an HTTP service: each user connects
+their account (in their profile, or when submitting) and the request can use
+the access token as `${accessToken}`.
+-}
+oauthFormView : AppState -> Form FormError SubmissionSettings -> String -> Html Form.Msg
+oauthFormView appState form prefix =
+    let
+        field name =
+            prefix ++ "." ++ name
+
+        enabled =
+            Maybe.withDefault False (Form.getFieldAsBool (field "enabled") form).value
+
+        oauthInputs =
+            if enabled then
+                [ UiForm.nested
+                    [ Field.input appState form (field "authorizeUrl") (gettext "Authorization URL" appState.locale)
+                        |> Field.toHtml
+                    , Field.input appState form (field "tokenUrl") (gettext "Token URL" appState.locale)
+                        |> Field.toHtml
+                    , Field.input appState form (field "clientId") (gettext "Client ID" appState.locale)
+                        |> Field.toHtml
+                    , Field.secret appState form (field "clientSecret") (gettext "Client Secret" appState.locale)
+                        |> Field.withHint (gettext "A secret that is set shows as ********; leave it to keep the secret." appState.locale)
+                        |> Field.toHtml
+                    , Field.input appState form (field "scopes") (gettext "Scopes" appState.locale)
+                        |> Field.withHint (gettext "Separated by spaces." appState.locale)
+                        |> Field.toHtml
+                    ]
+                ]
+
+            else
+                []
+    in
+    UiForm.section
+        { id = prefix ++ "-oauth"
+        , legend = "OAuth"
+        , content =
+            (Field.toggle appState form (field "enabled") (gettext "Users connect their account with OAuth" appState.locale)
+                |> Field.withHintMarkdown (String.format (gettext "The access token of the user is `${accessToken}` in the request, e.g., the header `Authorization` with the value `Bearer ${accessToken}`. Register the application of the service with the redirect URI `%s`." appState.locale) [ AppState.getClientUrlRoot appState ++ "/users/edit/current/submission-accounts" ])
+                |> Field.toHtml
+            )
+                :: oauthInputs
+        }
 
 
 zenodoTargetFormView : AppState -> Form FormError SubmissionSettings -> String -> Html Form.Msg

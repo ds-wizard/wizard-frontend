@@ -2,10 +2,12 @@ module Common.Api.Models.Settings.SubmissionSettings exposing
     ( Definition
     , Export
     , Multipart
+    , OAuth
     , Request
     , SubmissionSettings
     , Target(..)
-    , ZenodoTarget
+    , HttpTargetConfig
+    , ZenodoTargetConfig
     , accessLevelOptions
     , decoder
     , encode
@@ -47,6 +49,7 @@ type alias Definition =
     , description : String
     , exports : List Export
     , target : Target
+    , connectOnSubmit : Bool
     }
 
 
@@ -62,11 +65,32 @@ type alias Export =
 
 
 type Target
-    = HttpTarget { props : List String, request : Request }
-    | ZenodoTarget ZenodoTarget
+    = HttpTarget HttpTargetConfig
+    | ZenodoTarget ZenodoTargetConfig
 
 
-type alias ZenodoTarget =
+type alias HttpTargetConfig =
+    { props : List String
+    , request : Request
+    , oauth : Maybe OAuth
+    }
+
+
+{-| An optional OAuth 2.0 authorization of an HTTP target: each user connects
+their account once and the request uses the token as `${accessToken}`. The
+client secret is never returned: one that is set comes as `********`, and
+sending `********` back keeps it.
+-}
+type alias OAuth =
+    { authorizeUrl : String
+    , tokenUrl : String
+    , clientId : String
+    , clientSecret : String
+    , scopes : List String
+    }
+
+
+type alias ZenodoTargetConfig =
     { repository : String
     , resourceType : String
     , licenseId : String
@@ -156,6 +180,7 @@ decodeDefinition =
         |> D.required "description" D.string
         |> D.required "exports" (D.list decodeExport)
         |> D.required "target" decodeTarget
+        |> D.optional "connectOnSubmit" D.bool True
 
 
 decodeExport : Decoder Export
@@ -180,16 +205,27 @@ decodeTarget =
             )
 
 
-decodeHttpTarget : Decoder { props : List String, request : Request }
+decodeHttpTarget : Decoder HttpTargetConfig
 decodeHttpTarget =
-    D.succeed (\props request -> { props = props, request = request })
+    D.succeed HttpTargetConfig
         |> D.required "props" (D.list D.string)
         |> D.required "request" decodeRequest
+        |> D.optional "oauth" (D.maybe decodeOAuth) Nothing
 
 
-decodeZenodoTarget : Decoder ZenodoTarget
+decodeOAuth : Decoder OAuth
+decodeOAuth =
+    D.succeed OAuth
+        |> D.required "authorizeUrl" D.string
+        |> D.required "tokenUrl" D.string
+        |> D.required "clientId" D.string
+        |> D.required "clientSecret" D.string
+        |> D.required "scopes" (D.list D.string)
+
+
+decodeZenodoTarget : Decoder ZenodoTargetConfig
 decodeZenodoTarget =
-    D.succeed ZenodoTarget
+    D.succeed ZenodoTargetConfig
         |> D.required "repository" D.string
         |> D.required "resourceType" D.string
         |> D.required "licenseId" D.string
@@ -229,6 +265,7 @@ encodeDefinition definition =
         , ( "description", E.string definition.description )
         , ( "exports", E.list encodeExport definition.exports )
         , ( "target", encodeTarget definition.target )
+        , ( "connectOnSubmit", E.bool definition.connectOnSubmit )
         ]
 
 
@@ -250,6 +287,7 @@ encodeTarget target =
                 [ ( "type", E.string httpTargetType )
                 , ( "props", E.list E.string httpTarget.props )
                 , ( "request", encodeRequest httpTarget.request )
+                , ( "oauth", E.maybe encodeOAuth httpTarget.oauth )
                 ]
 
         ZenodoTarget zenodoTarget ->
@@ -261,6 +299,17 @@ encodeTarget target =
                 , ( "accessLevel", E.string zenodoTarget.accessLevel )
                 , ( "community", E.maybe E.string zenodoTarget.community )
                 ]
+
+
+encodeOAuth : OAuth -> E.Value
+encodeOAuth oauth =
+    E.object
+        [ ( "authorizeUrl", E.string oauth.authorizeUrl )
+        , ( "tokenUrl", E.string oauth.tokenUrl )
+        , ( "clientId", E.string oauth.clientId )
+        , ( "clientSecret", E.string oauth.clientSecret )
+        , ( "scopes", E.list E.string oauth.scopes )
+        ]
 
 
 encodeRequest : Request -> E.Value
@@ -300,6 +349,7 @@ validateDefinition =
         |> V.andMap (V.field "description" V.optionalString)
         |> V.andMap (V.field "exports" (V.list validateExport))
         |> V.andMap (V.field "target" validateTarget)
+        |> V.andMap (V.field "connectOnSubmit" V.bool)
 
 
 validateExport : Validation FormError Export
@@ -327,16 +377,38 @@ validateTarget =
             )
 
 
-validateHttpTarget : Validation FormError { props : List String, request : Request }
+validateHttpTarget : Validation FormError HttpTargetConfig
 validateHttpTarget =
-    V.succeed (\props request -> { props = props, request = request })
+    V.succeed HttpTargetConfig
         |> V.andMap (V.field "props" (V.list V.string))
         |> V.andMap (V.field "request" validateRequest)
+        |> V.andMap (V.field "oauth" validateOAuth)
 
 
-validateZenodoTarget : Validation FormError ZenodoTarget
+{-| The OAuth of an HTTP target is on when its `enabled` field is.
+-}
+validateOAuth : Validation FormError (Maybe OAuth)
+validateOAuth =
+    V.field "enabled" V.bool
+        |> V.andThen
+            (\enabled ->
+                if enabled then
+                    V.succeed OAuth
+                        |> V.andMap (V.field "authorizeUrl" V.string)
+                        |> V.andMap (V.field "tokenUrl" V.string)
+                        |> V.andMap (V.field "clientId" V.string)
+                        |> V.andMap (V.field "clientSecret" V.string)
+                        |> V.andMap (V.field "scopes" (V.oneOf [ V.emptyString |> V.map (always []), V.string |> V.map String.words ]))
+                        |> V.map Just
+
+                else
+                    V.succeed Nothing
+            )
+
+
+validateZenodoTarget : Validation FormError ZenodoTargetConfig
 validateZenodoTarget =
-    V.succeed ZenodoTarget
+    V.succeed ZenodoTargetConfig
         |> V.andMap (V.field "repository" V.string)
         |> V.andMap (V.field "resourceType" V.string)
         |> V.andMap (V.field "licenseId" V.string)
@@ -384,6 +456,7 @@ initDefinition definition =
     , ( "description", Field.string definition.description )
     , ( "exports", Field.list (List.map (Field.group << initExport) definition.exports) )
     , ( "target", Field.group (initTarget definition.target) )
+    , ( "connectOnSubmit", Field.bool definition.connectOnSubmit )
     ]
 
 
@@ -406,12 +479,12 @@ initTarget target =
             ( "type", Field.string zenodoTargetType ) :: zenodoTargetFields zenodoTarget ++ httpTargetFields emptyHttpTarget
 
 
-emptyHttpTarget : { props : List String, request : Request }
+emptyHttpTarget : HttpTargetConfig
 emptyHttpTarget =
-    { props = [], request = { url = "", method = "POST", multipart = { enabled = False, fileName = "" }, headers = Dict.empty } }
+    { props = [], request = { url = "", method = "POST", multipart = { enabled = False, fileName = "" }, headers = Dict.empty }, oauth = Nothing }
 
 
-defaultZenodoTarget : ZenodoTarget
+defaultZenodoTarget : ZenodoTargetConfig
 defaultZenodoTarget =
     { repository = "SandboxZenodoRepository"
     , resourceType = "publication-datamanagementplan"
@@ -421,14 +494,33 @@ defaultZenodoTarget =
     }
 
 
-httpTargetFields : { props : List String, request : Request } -> List ( String, Field )
+httpTargetFields : HttpTargetConfig -> List ( String, Field )
 httpTargetFields httpTarget =
     [ ( "props", Field.list (List.map Field.string httpTarget.props) )
     , ( "request", Field.group (initRequest httpTarget.request) )
+    , ( "oauth", Field.group (initOAuth httpTarget.oauth) )
     ]
 
 
-zenodoTargetFields : ZenodoTarget -> List ( String, Field )
+{-| The scopes are one field, separated by spaces (as OAuth writes them).
+-}
+initOAuth : Maybe OAuth -> List ( String, Field )
+initOAuth mOAuth =
+    case mOAuth of
+        Just oauth ->
+            [ ( "enabled", Field.bool True )
+            , ( "authorizeUrl", Field.string oauth.authorizeUrl )
+            , ( "tokenUrl", Field.string oauth.tokenUrl )
+            , ( "clientId", Field.string oauth.clientId )
+            , ( "clientSecret", Field.string oauth.clientSecret )
+            , ( "scopes", Field.string (String.join " " oauth.scopes) )
+            ]
+
+        Nothing ->
+            [ ( "enabled", Field.bool False ) ]
+
+
+zenodoTargetFields : ZenodoTargetConfig -> List ( String, Field )
 zenodoTargetFields zenodoTarget =
     [ ( "repository", Field.string zenodoTarget.repository )
     , ( "resourceType", Field.string zenodoTarget.resourceType )

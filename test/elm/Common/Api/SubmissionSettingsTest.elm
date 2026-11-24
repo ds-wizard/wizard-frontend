@@ -58,6 +58,7 @@ submissionSettingsTests =
                                 [ HttpTarget
                                     { props = [ "Token" ]
                                     , request = { url = "https://example.com", method = "POST", multipart = { enabled = False, fileName = "" }, headers = Dict.fromList [ ( "Authorization", "${Token}" ) ] }
+                                    , oauth = Nothing
                                     }
                                 , ZenodoTarget
                                     { repository = "SandboxZenodoRepository"
