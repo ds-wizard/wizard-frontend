@@ -3,6 +3,8 @@ module Common.Api.SubmissionSettingsTest exposing (submissionSettingsTests)
 import Common.Api.Models.Settings.SubmissionSettings as SubmissionSettings exposing (Target(..))
 import Dict
 import Expect
+import Form
+import Form.Field as Field
 import Json.Decode as D
 import Test exposing (Test, describe, test)
 
@@ -76,6 +78,20 @@ submissionSettingsTests =
                 D.decodeString SubmissionSettings.decoder json
                     |> Result.map (.definitions >> List.concatMap .exports >> List.map .madmpMetadata)
                     |> Expect.equal (Ok [ False, False, True ])
+        , test "a submission added in the form connects the account when submitting" <|
+            \_ ->
+                let
+                    form =
+                        SubmissionSettings.initForm { enabled = True, definitions = [] }
+                            |> Form.update SubmissionSettings.validation (Form.Append "definitions")
+                            |> Form.update SubmissionSettings.validation (Form.Input "definitions.0.id" Form.Text (Field.String "repo"))
+                            |> Form.update SubmissionSettings.validation (Form.Input "definitions.0.name" Form.Text (Field.String "Repository"))
+                            |> Form.update SubmissionSettings.validation (Form.Input "definitions.0.target.type" Form.Select (Field.String SubmissionSettings.zenodoTargetType))
+                            |> Form.update SubmissionSettings.validation (Form.Input "definitions.0.target.repository" Form.Select (Field.String "SandboxZenodoRepository"))
+                in
+                Form.getOutput form
+                    |> Maybe.map (.definitions >> List.map .connectOnSubmit)
+                    |> Expect.equal (Just [ True ])
         , test "encodes what it decodes" <|
             \_ ->
                 let

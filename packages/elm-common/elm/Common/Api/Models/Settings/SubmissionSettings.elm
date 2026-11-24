@@ -367,7 +367,9 @@ validateDefinitionFields =
         |> V.andMap (V.field "description" V.optionalString)
         |> V.andMap (V.field "exports" (V.list validateExport))
         |> V.andMap (V.field "target" validateTarget)
-        |> V.andMap (V.field "connectOnSubmit" V.bool)
+        -- The form keeps the opposite (a checkbox an added submission leaves unticked), so that a new submission connects
+        -- the account when submitting, as the server does when nothing is said
+        |> V.andMap (V.field "requireConnectionInProfile" V.bool |> V.map not)
 
 
 validateExport : Validation FormError Export
@@ -483,7 +485,7 @@ initDefinition definition =
     , ( "description", Field.string definition.description )
     , ( "exports", Field.list (List.map (Field.group << initExport) definition.exports) )
     , ( "target", Field.group (initTarget definition.target) )
-    , ( "connectOnSubmit", Field.bool definition.connectOnSubmit )
+    , ( "requireConnectionInProfile", Field.bool (not definition.connectOnSubmit) )
     ]
 
 

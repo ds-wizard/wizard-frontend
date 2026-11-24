@@ -242,8 +242,8 @@ definitionFormView appState templates form index =
         |> Field.toHtml
     ]
         ++ targetInput
-        ++ [ Field.checkbox appState form (field "connectOnSubmit") (gettext "Connect the account when submitting" appState.locale)
-                |> Field.withHint (gettext "When the target needs an account the user has not connected yet (Zenodo, an HTTP service with OAuth), submitting first asks the user to connect it and then submits. Otherwise, the user is told to connect it in their profile." appState.locale)
+        ++ [ Field.checkbox appState form (field "requireConnectionInProfile") (gettext "Require connecting the account in the profile first" appState.locale)
+                |> Field.withHint (gettext "When the target needs an account the user has not connected yet (Zenodo, an HTTP service with OAuth), submitting asks the user to connect it and then submits. With this option, the user is told to connect it in their profile first instead." appState.locale)
                 |> Field.toHtml
            ]
 
