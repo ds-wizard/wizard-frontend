@@ -617,7 +617,7 @@ navigationAt mount appState active =
 
         projectsLinks =
             [ ( ProjectsRoute, gettext "Projects" appState.locale, is ProjectsRoute )
-            , ( SubmissionRoute, gettext "Document Submission" appState.locale, is SubmissionRoute )
+            , ( SubmissionRoute, gettext "Submissions" appState.locale, is SubmissionRoute )
             ]
 
         appearanceLinks =

@@ -122,7 +122,7 @@ view appState model =
                     ( [], { genericModel_ | config = Loading } )
     in
     SettingsPage.view appState
-        { title = gettext "Document Submission" appState.locale
+        { title = gettext "Submissions" appState.locale
         , description = Nothing
         , guideLink = Just (Section.guideLink appState GuideLinks.settingsDocumentSubmission)
         , formView = formView appState templates
@@ -137,16 +137,17 @@ formView appState templates form =
         enabled =
             Maybe.withDefault False (Form.getFieldAsBool "enabled" form).value
 
-        servicesInput =
+        definitionsInput =
             if enabled then
                 [ UiForm.nested
-                    [ Field.list appState
+                    [ Field.listWithHint (gettext "Each submission generates the selected documents from a project and sends them together to its target. Project editors choose a submission when they submit a project." appState.locale)
+                        appState
                         form
-                        { field = "services"
-                        , label = gettext "Services" appState.locale
-                        , addLabel = gettext "Add service" appState.locale
-                        , rowLabel = \index -> stringValue form (Field.listItemPath "services" index "name")
-                        , row = serviceFormView appState templates form
+                        { field = "definitions"
+                        , label = gettext "Submissions" appState.locale
+                        , addLabel = gettext "Add submission" appState.locale
+                        , rowLabel = \index -> stringValue form (Field.listItemPath "definitions" index "name")
+                        , row = definitionFormView appState templates form
                         }
                     ]
                 ]
@@ -157,24 +158,43 @@ formView appState templates form =
     Html.map SettingsPage.formMsg <|
         Layout.stack
             ((Field.toggle appState form "enabled" (gettext "Enabled" appState.locale)
-                |> Field.withHint (gettext "If enabled, you can configure external services for uploading documents from the instance." appState.locale)
+                |> Field.withHint (gettext "If enabled, projects can be submitted to external services such as Zenodo or a repository with an HTTP API." appState.locale)
                 |> Field.toHtml
              )
-                :: servicesInput
+                :: definitionsInput
             )
 
 
-serviceFormView : AppState -> List DocumentTemplateAllSuggestion -> Form FormError SubmissionSettings -> Int -> List (Html Form.Msg)
-serviceFormView appState templates form index =
+definitionFormView : AppState -> List DocumentTemplateAllSuggestion -> Form FormError SubmissionSettings -> Int -> List (Html Form.Msg)
+definitionFormView appState templates form index =
     let
         field =
-            Field.listItemPath "services" index
+            Field.listItemPath "definitions" index
 
-        supportedFormatsField =
-            field "supportedFormats"
+        exportsField =
+            field "exports"
 
-        propsField =
-            field "props"
+        targetType =
+            stringValue form (field "target.type")
+
+        isZenodo =
+            targetType == SubmissionSettings.zenodoTargetType
+
+        targetTypeOptions =
+            [ ( "", "--" )
+            , ( SubmissionSettings.httpTargetType, gettext "HTTP service" appState.locale )
+            , ( SubmissionSettings.zenodoTargetType, "Zenodo" )
+            ]
+
+        targetInput =
+            if isZenodo then
+                [ zenodoTargetFormView appState form (field "target") ]
+
+            else if targetType == SubmissionSettings.httpTargetType then
+                [ httpTargetFormView appState form (field "target") ]
+
+            else
+                []
     in
     [ Field.input appState form (field "id") (gettext "ID" appState.locale)
         |> Field.toHtml
@@ -182,36 +202,114 @@ serviceFormView appState templates form index =
         |> Field.toHtml
     , Field.markdown appState form (field "description") (gettext "Description" appState.locale)
         |> Field.toHtml
-    , Field.listWithHint (gettext "Select document templates and formats that can be submitted using this submission service." appState.locale)
+    , Field.listWithHint (gettext "The documents generated from the project and submitted together. Documents already generated from the current state of the project are reused." appState.locale)
         appState
         form
-        { field = supportedFormatsField
-        , label = gettext "Supported Formats" appState.locale
-        , addLabel = gettext "Add format" appState.locale
-        , rowLabel = always ""
-        , row = supportedFormatFormView appState templates form supportedFormatsField
+        { field = exportsField
+        , label = gettext "Documents" appState.locale
+        , addLabel = gettext "Add document" appState.locale
+        , rowLabel = \exportIndex -> stringValue form (Field.listItemPath exportsField exportIndex "formatName")
+        , row = exportFormView appState templates form isZenodo exportsField
         }
-    , Field.listWithHintMarkdown (gettext "You can create properties that can be set by each user in their profile. Then, you can use these properties in the request settings. For example, if you want each user to use their own authorization token, you can create a property called `Token` and use it in request headers as `${Token}`. Users will be able to set the token in their profile settings." appState.locale)
-        appState
-        form
-        { field = propsField
-        , label = gettext "User Properties" appState.locale
-        , addLabel = gettext "Add property" appState.locale
-        , rowLabel = \propIndex -> stringValue form (Field.listItemPath propsField propIndex "")
-        , row =
-            \propIndex ->
-                [ Field.input appState form (Field.listItemPath propsField propIndex "") (gettext "Name" appState.locale)
+    , Field.select appState form (field "target.type") (gettext "Target" appState.locale) targetTypeOptions
+        |> Field.toHtml
+    ]
+        ++ targetInput
+
+
+httpTargetFormView : AppState -> Form FormError SubmissionSettings -> String -> Html Form.Msg
+httpTargetFormView appState form prefix =
+    let
+        propsField =
+            prefix ++ ".props"
+    in
+    Layout.stack
+        [ Field.listWithHintMarkdown (gettext "You can create properties that can be set by each user in their profile. Then, you can use these properties in the request settings. For example, if you want each user to use their own authorization token, you can create a property called `Token` and use it in request headers as `${Token}`. Users will be able to set the token in their profile settings." appState.locale)
+            appState
+            form
+            { field = propsField
+            , label = gettext "User Properties" appState.locale
+            , addLabel = gettext "Add property" appState.locale
+            , rowLabel = \propIndex -> stringValue form (Field.listItemPath propsField propIndex "")
+            , row =
+                \propIndex ->
+                    [ Field.input appState form (Field.listItemPath propsField propIndex "") (gettext "Name" appState.locale)
+                        |> Field.toHtml
+                    ]
+            }
+        , requestFormView appState form (prefix ++ ".request")
+        ]
+
+
+zenodoTargetFormView : AppState -> Form FormError SubmissionSettings -> String -> Html Form.Msg
+zenodoTargetFormView appState form prefix =
+    let
+        field name =
+            prefix ++ "." ++ name
+
+        currentRepository =
+            stringValue form (field "repository")
+
+        repositories =
+            appState.config.submission.zenodoRepositories
+                ++ (if String.isEmpty currentRepository || List.member currentRepository appState.config.submission.zenodoRepositories then
+                        []
+
+                    else
+                        [ currentRepository ]
+                   )
+
+        repositoryOptions =
+            ( "", "--" ) :: List.map (\repository -> ( repository, SubmissionSettings.zenodoRepositoryName repository )) repositories
+
+        repositoryHint =
+            if List.isEmpty appState.config.submission.zenodoRepositories then
+                Field.withHint (gettext "No Zenodo repository is configured yet. Configure the OAuth application of Zenodo in the Zenodo settings first." appState.locale)
+
+            else
+                Field.withHint (gettext "Users connect their Zenodo account in their profile; the documents are uploaded as an unpublished draft they publish in Zenodo." appState.locale)
+    in
+    UiForm.section
+        { id = prefix ++ "-zenodo"
+        , legend = "Zenodo"
+        , content =
+            [ Field.select appState form (field "repository") (gettext "Repository" appState.locale) repositoryOptions
+                |> repositoryHint
+                |> Field.toHtml
+            , Field.select appState form (field "resourceType") (gettext "Resource Type" appState.locale) SubmissionSettings.resourceTypeOptions
+                |> Field.toHtml
+            , Layout.grid
+                [ Field.input appState form (field "licenseId") (gettext "License" appState.locale)
+                    |> Field.withHint (gettext "The identifier of the license in Zenodo, e.g., cc-by-4.0." appState.locale)
+                    |> Field.toHtml
+                , Field.select appState form (field "accessLevel") (gettext "Access" appState.locale) SubmissionSettings.accessLevelOptions
                     |> Field.toHtml
                 ]
+            , Field.input appState form (field "community") (gettext "Community" appState.locale)
+                |> Field.withHint (gettext "Optional identifier of a Zenodo community; the draft is added to it as a community submission (not submitted for review)." appState.locale)
+                |> Field.toHtml
+            ]
         }
-    , requestFormView appState form (field "request")
-    ]
 
 
-{-| A format a service takes: a document template, one of its versions, and one
-of that version's formats by name. Each is chosen from what the one before it
-leaves.
+{-| A document of a submission: a document template, one of its versions, and
+one of that version's formats by name. Each is chosen from what the one before
+it leaves.
 -}
+exportFormView : AppState -> List DocumentTemplateAllSuggestion -> Form FormError SubmissionSettings -> Bool -> String -> Int -> List (Html Form.Msg)
+exportFormView appState templates form isZenodo prefix index =
+    supportedFormatFormView appState templates form prefix index
+        ++ (if isZenodo then
+                [ Field.checkbox appState form (Field.listItemPath prefix index "madmpMetadata") (gettext "Use as maDMP metadata source" appState.locale)
+                    |> Field.withHint (gettext "For an RDA maDMP JSON document: its title, creators, funding and related identifiers are used as the metadata of the Zenodo record." appState.locale)
+                    |> Field.toHtml
+                ]
+
+            else
+                []
+           )
+
+
 supportedFormatFormView : AppState -> List DocumentTemplateAllSuggestion -> Form FormError SubmissionSettings -> String -> Int -> List (Html Form.Msg)
 supportedFormatFormView appState templates form prefix index =
     let

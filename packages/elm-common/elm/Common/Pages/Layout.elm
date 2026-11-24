@@ -333,7 +333,7 @@ pageName appState route =
                         gettext "Projects" l
 
                     SettingsRoutes.SubmissionRoute ->
-                        gettext "Document Submission" l
+                        gettext "Submissions" l
 
                     SettingsRoutes.UsageRoute ->
                         gettext "Usage" l
