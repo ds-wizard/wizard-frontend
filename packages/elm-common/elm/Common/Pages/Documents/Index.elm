@@ -14,8 +14,8 @@ Documents are generated in the background, so while any document on the page is
 queued or in progress the page asks again every second, without the loading
 state and without closing an open menu (`Listing.reloadBackground`).
 
-A document that is done can be downloaded (in place, as in the wizard) and, where
-submission is on, submitted to a service. One that failed can show why. Plugins
+A document that is done can be downloaded (in place, as in the wizard). One that
+failed can show why. Projects are submitted from their own documents tab. Plugins
 may add their own actions.
 
 When the listing is of one project, that project is a filter in the toolbar: it
@@ -30,8 +30,6 @@ import Common.Api.Documents as DocumentsApi
 import Common.Api.Models.Document exposing (Document)
 import Common.Api.Models.Document.DocumentState exposing (DocumentState(..))
 import Common.Api.Models.ProjectCommon exposing (ProjectCommon)
-import Common.Api.Models.Submission as Submission exposing (Submission)
-import Common.Api.Models.Submission.SubmissionState as SubmissionState
 import Common.Api.Models.UrlResponse exposing (UrlResponse)
 import Common.Api.Projects as ProjectsApi
 import Common.Components.ConfirmModal as ConfirmModal
@@ -42,7 +40,6 @@ import Common.Components.ItemActions as ItemActions
 import Common.Components.Listing as Listing
 import Common.Components.Page as Page
 import Common.Components.PluginModal as PluginModal
-import Common.Components.SubmitDocumentModal as SubmitDocumentModal
 import Common.Components.Timestamp as Timestamp
 import Common.Components.UserAvatar as UserAvatar
 import Common.Data.AppState as AppState exposing (AppState)
@@ -88,9 +85,7 @@ type alias Model =
     , deletingDocument : ActionResult ()
     , projectUuid : Maybe Uuid
     , project : Maybe (ActionResult ProjectCommon)
-    , submitModal : SubmitDocumentModal.Model
     , documentErrorModal : Maybe String
-    , submissionErrorModal : Maybe String
     , pluginModal : PluginModal.Model Document
     , rowActionsOrigin : Maybe Uuid
     }
@@ -103,9 +98,7 @@ initialModel projectUuid pqs =
     , deletingDocument = Unset
     , projectUuid = projectUuid
     , project = Maybe.map (always Loading) projectUuid
-    , submitModal = SubmitDocumentModal.initialModel
     , documentErrorModal = Nothing
-    , submissionErrorModal = Nothing
     , pluginModal = PluginModal.initialModel
     , rowActionsOrigin = Nothing
     }
@@ -150,10 +143,7 @@ type Msg
     | DeleteDocument
     | DeleteDocumentCompleted (Result ApiError ())
     | ListingMsg (Listing.Msg Document)
-    | SubmitModalMsg SubmitDocumentModal.Msg
-    | DocumentSubmitted Submission
     | SetDocumentErrorModal (Maybe String)
-    | SetSubmissionErrorModal (Maybe String)
     | DownloadDocument Document
     | GotDocumentUrlCompleted (Result ApiError UrlResponse)
     | PluginModalMsg (PluginModal.Msg Document)
@@ -231,32 +221,6 @@ update cfg appState msg model =
             in
             ( { model | documents = documents }, cmd )
 
-        SubmitModalMsg modalMsg ->
-            let
-                ( submitModal, cmd ) =
-                    SubmitDocumentModal.update
-                        { wrapMsg = cfg.wrapMsg << SubmitModalMsg
-                        , logoutMsg = cfg.logoutMsg
-                        , submittedMsg = cfg.wrapMsg << DocumentSubmitted
-                        , closeCmd = focusRowActions cfg
-                        }
-                        appState
-                        modalMsg
-                        model.submitModal
-            in
-            ( { model | submitModal = submitModal }, cmd )
-
-        DocumentSubmitted submission ->
-            let
-                addSubmission document =
-                    if submission.documentUuid == document.uuid then
-                        { document | submissions = submission :: document.submissions }
-
-                    else
-                        document
-            in
-            ( { model | documents = Listing.updateItems addSubmission model.documents }, Cmd.none )
-
         SetDocumentErrorModal mbError ->
             ( { model | documentErrorModal = mbError }
             , if Maybe.isNothing mbError && Maybe.isJust model.documentErrorModal then
@@ -265,9 +229,6 @@ update cfg appState msg model =
               else
                 Cmd.none
             )
-
-        SetSubmissionErrorModal mbError ->
-            ( { model | submissionErrorModal = mbError }, Cmd.none )
 
         DownloadDocument document ->
             ( model, DocumentsApi.getDocumentUrl appState document.uuid (cfg.wrapMsg << GotDocumentUrlCompleted) )
@@ -370,18 +331,11 @@ viewDocuments appState model mbProject =
         { notices = []
         , overlays =
             [ deleteModal appState model
-            , Html.map SubmitModalMsg (SubmitDocumentModal.view appState model.submitModal)
             , errorModal appState
                 { title = gettext "Document error" appState.locale
                 , testId = "document-error"
                 , error = model.documentErrorModal
                 , onClose = SetDocumentErrorModal Nothing
-                }
-            , errorModal appState
-                { title = gettext "Submission error" appState.locale
-                , testId = "submission-error"
-                , error = model.submissionErrorModal
-                , onClose = SetSubmissionErrorModal Nothing
                 }
             , PluginModal.view appState
                 { attributes = \document -> [ PluginElement.documentValue document ]
@@ -489,13 +443,6 @@ listingItem appState document =
                     ]
                 )
 
-        submissionsDetail =
-            case List.sortWith Submission.compare document.submissions of
-                [] ->
-                    Nothing
-
-                submissions ->
-                    Just (Layout.stack (List.map (viewSubmission appState) submissions))
     in
     { row
         | icon = Just (ItemIcon.toHtml (UserAvatar.item document.name Nothing))
@@ -508,7 +455,6 @@ listingItem appState document =
                 , projectFragment
                 , documentTemplateFragment
                 ]
-        , detail = submissionsDetail
         , timestamp = Just (Timestamp.created appState document.createdAt)
         , actions = listingActions appState document
     }
@@ -542,14 +488,6 @@ listingActions appState document =
                 }
                 |> ItemActions.withTestId "listing-item_action_download"
 
-        submit =
-            ItemActions.action
-                { icon = Icon.solid "fa-paper-plane"
-                , label = gettext "Submit" appState.locale
-                , onSelect = RowAction document.uuid (SubmitModalMsg (SubmitDocumentModal.open document))
-                }
-                |> ItemActions.withTestId "listing-item_action_submit"
-
         viewError =
             ItemActions.action
                 { icon = Icon.solid "fa-circle-exclamation"
@@ -568,7 +506,6 @@ listingActions appState document =
     in
     ItemActions.groups
         [ [ ( download, Feature.documentDownload document )
-          , ( submit, Feature.documentSubmit appState document )
           , ( viewError, Maybe.isJust document.workerLog && document.state == ErrorDocumentState )
           ]
         , DocumentPluginActions.actions appState document (RowAction document.uuid << PluginModalMsg)
@@ -590,54 +527,6 @@ stateBadge appState state =
 
         ErrorDocumentState ->
             Just (Badge.danger (gettext "Error" appState.locale))
-
-
-{-| A submission of the document: to which service, how it went, a way to see
-the result, and when.
--}
-viewSubmission : AppState -> Submission -> Html Msg
-viewSubmission appState submission =
-    let
-        stateBadge_ =
-            case submission.state of
-                SubmissionState.InProgress ->
-                    Badge.info (gettext "Submitting" appState.locale)
-
-                SubmissionState.Done ->
-                    Badge.success (gettext "Submitted" appState.locale)
-
-                SubmissionState.Error ->
-                    Badge.danger (gettext "Error" appState.locale)
-
-        link =
-            case ( submission.state, submission.location, submission.returnedData ) of
-                ( SubmissionState.Done, Just location, _ ) ->
-                    [ text " "
-                    , Link.link { label = gettext "View submission" appState.locale, url = location }
-                        |> Link.external
-                        |> Link.withExternalNotice (gettext "(opens in a new tab)" appState.locale)
-                        |> Link.toHtml
-                    ]
-
-                ( SubmissionState.Error, _, Just _ ) ->
-                    [ text " "
-                    , Button.ghost (gettext "View error" appState.locale) (SetSubmissionErrorModal (Just (Submission.getReturnedData submission)))
-                        |> Button.small
-                        |> Button.toHtml
-                    ]
-
-                _ ->
-                    []
-    in
-    span []
-        ([ text (Submission.visibleName submission)
-         , text " "
-         , Badge.toHtml stateBadge_
-         , text " "
-         , Timestamp.view appState submission.updatedAt
-         ]
-            ++ link
-        )
 
 
 deleteModal : AppState -> Model -> Html Msg

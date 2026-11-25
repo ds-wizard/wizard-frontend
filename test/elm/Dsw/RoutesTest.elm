@@ -162,6 +162,7 @@ routes =
     , ( "settings dashboard and menu", SettingsRoute Common.Pages.Settings.Routes.DashboardAndMenuRoute )
     , ( "settings open id detail", SettingsRoute (Common.Pages.Settings.Routes.OpenIdDetailRoute uuid1) )
     , ( "settings registry", SettingsRoute Common.Pages.Settings.Routes.RegistryRoute )
+    , ( "settings zenodo", SettingsRoute Common.Pages.Settings.Routes.ZenodoRoute )
     , ( "settings usage", SettingsRoute Common.Pages.Settings.Routes.UsageRoute )
 
     -- Tenants
@@ -174,6 +175,7 @@ routes =
     , ( "users index with role", UsersRoute (Common.Pages.Users.Routes.IndexRoute pqsPaged (Just "admin")) )
     , ( "users create", UsersRoute Common.Pages.Users.Routes.CreateRoute )
     , ( "users edit current", UsersRoute (Common.Pages.Users.Routes.EditRoute UuidOrCurrent.current UserEditRoute.Profile) )
+    , ( "users edit zenodo connections", UsersRoute (Common.Pages.Users.Routes.EditRoute UuidOrCurrent.current (UserEditRoute.SubmissionAccounts Nothing Nothing Nothing)) )
     , ( "users edit tours", UsersRoute (Common.Pages.Users.Routes.EditRoute (UuidOrCurrent.uuid uuid1) UserEditRoute.Tours) )
     , ( "users edit api keys", UsersRoute (Common.Pages.Users.Routes.EditRoute UuidOrCurrent.current UserEditRoute.ApiKeys) )
     ]

@@ -10,7 +10,6 @@ import Common.Api.Models.Document.DocumentState as DocumentState exposing (Docum
 import Common.Api.Models.DocumentTemplate.DocumentTemplateFormat as DocumentTemplateFormat exposing (DocumentTemplateFormat)
 import Common.Api.Models.DocumentTemplateInfo as DocumentTemplateInfo exposing (DocumentTemplateInfo)
 import Common.Api.Models.ProjectInfo as ProjectInfo exposing (ProjectInfo)
-import Common.Api.Models.Submission as Submission exposing (Submission)
 import Iso8601
 import Json.Decode as D exposing (Decoder)
 import Json.Decode.Extra as D
@@ -32,7 +31,6 @@ type alias Document =
     , format : DocumentTemplateFormat
     , language : Maybe String
     , state : DocumentState
-    , submissions : List Submission
     , createdBy : Maybe Uuid
     , fileSize : Maybe Int
     , workerLog : Maybe String
@@ -60,7 +58,6 @@ decoder =
         |> D.required "format" DocumentTemplateFormat.decoder
         |> D.required "language" (D.maybe D.string)
         |> D.required "state" DocumentState.decoder
-        |> D.required "submissions" (D.list Submission.decoder)
         |> D.required "createdBy" (D.maybe Uuid.decoder)
         |> D.required "fileSize" (D.maybe D.int)
         |> D.required "workerLog" (D.maybe D.string)

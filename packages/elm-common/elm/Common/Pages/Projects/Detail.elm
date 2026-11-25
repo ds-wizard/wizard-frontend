@@ -887,7 +887,7 @@ updatePage cfg appState msg model =
         InitDocuments pqs ->
             let
                 ( documents, cmd ) =
-                    Documents.init pqs
+                    Documents.init appState model.uuid pqs
             in
             ( { model | documents = documents }, Cmd.map (cfg.wrapMsg << DocumentsMsg) cmd )
 

@@ -12,4 +12,5 @@ type UserEditRoute
     | ApiKeys
     | ActiveSessions
     | SubmissionSettings
+    | SubmissionAccounts (Maybe String) (Maybe String) (Maybe String)
     | PluginSettings Uuid

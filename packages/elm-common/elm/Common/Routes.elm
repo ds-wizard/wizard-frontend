@@ -113,6 +113,7 @@ module Common.Routes exposing
     , settingsRoleCreate
     , settingsRoleDetail
     , settingsRoles
+    , settingsZenodo
     , tenantsCreate
     , tenantsDetail
     , tenantsIndex
@@ -135,6 +136,7 @@ module Common.Routes exposing
     , usersEditLanguageCurrent
     , usersEditPassword
     , usersEditPluginSettings
+    , usersEditSubmissionAccounts
     , usersEditSubmissionSettings
     , usersEditTours
     , usersIndex
@@ -277,6 +279,23 @@ isSameListingRoute originalRoute nextRoute =
         || isSameDocumentTemplateDetail originalRoute nextRoute
         || isSameProjectDocuments originalRoute nextRoute
         || isSameProjectFiles originalRoute nextRoute
+        || isSameSubmissionAccounts originalRoute nextRoute
+
+
+{-| The submission accounts page completes a connection from the address the
+service returns to, then replaces it with one without the code and the state.
+That must keep the page, which tells how the connection went, so the address
+without them is the same context as the one with them.
+-}
+isSameSubmissionAccounts : Route -> Route -> Bool
+isSameSubmissionAccounts originalRoute nextRoute =
+    case ( originalRoute, nextRoute ) of
+        -- The cleaned address is always the current user's.
+        ( UsersRoute (Common.Pages.Users.Routes.EditRoute _ (UserEditRoute.SubmissionAccounts (Just _) _ _)), UsersRoute (Common.Pages.Users.Routes.EditRoute _ (UserEditRoute.SubmissionAccounts Nothing Nothing Nothing)) ) ->
+            True
+
+        _ ->
+            False
 
 
 {-| The documents tab of a project detail is a listing: searching, sorting and
@@ -1019,6 +1038,11 @@ settingsRegistry =
     SettingsRoute Common.Pages.Settings.Routes.RegistryRoute
 
 
+settingsZenodo : Route
+settingsZenodo =
+    SettingsRoute Common.Pages.Settings.Routes.ZenodoRoute
+
+
 settingsPluginSettings : Uuid -> Route
 settingsPluginSettings pluginUuid =
     SettingsRoute (Common.Pages.Settings.Routes.PluginSettingsRoute pluginUuid)
@@ -1114,6 +1138,11 @@ usersEditActiveSessions =
 usersEditSubmissionSettings : UuidOrCurrent -> Route
 usersEditSubmissionSettings =
     UsersRoute << flip Common.Pages.Users.Routes.EditRoute UserEditRoute.SubmissionSettings
+
+
+usersEditSubmissionAccounts : UuidOrCurrent -> Route
+usersEditSubmissionAccounts uuidOrCurrent =
+    UsersRoute (Common.Pages.Users.Routes.EditRoute uuidOrCurrent (UserEditRoute.SubmissionAccounts Nothing Nothing Nothing))
 
 
 usersEditPluginSettings : UuidOrCurrent -> Uuid -> Route

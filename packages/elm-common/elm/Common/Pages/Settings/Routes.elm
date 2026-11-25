@@ -34,6 +34,7 @@ type Route
     | DashboardAndMenuRoute
     | LookAndFeelRoute
     | RegistryRoute
+    | ZenodoRoute
     | ProjectsRoute
     | SubmissionRoute
     | UsageRoute
@@ -105,6 +106,7 @@ parsers appState wrapRoute =
         |> List.insertIf (map (wrapRoute <| DashboardAndMenuRoute) (s moduleRoot </> s "dashboard-and-menu")) True
         |> List.insertIf (map (wrapRoute <| LookAndFeelRoute) (s moduleRoot </> s "look-and-feel")) True
         |> List.insertIf (map (wrapRoute <| RegistryRoute) (s moduleRoot </> s "registry")) (Feature.registry appState)
+        |> List.insertIf (map (wrapRoute <| ZenodoRoute) (s moduleRoot </> s "zenodo")) True
         |> List.insertIf (map (wrapRoute <| ProjectsRoute) (s moduleRoot </> s "projects")) True
         |> List.insertIf (map (wrapRoute <| SubmissionRoute) (s moduleRoot </> s "submission")) True
         |> List.insertIf (map (wrapRoute <| UsageRoute) (s moduleRoot </> s "usage")) True
@@ -173,6 +175,9 @@ toUrl route =
 
         RegistryRoute ->
             [ moduleRoot, "registry" ]
+
+        ZenodoRoute ->
+            [ moduleRoot, "zenodo" ]
 
         ProjectsRoute ->
             [ moduleRoot, "projects" ]

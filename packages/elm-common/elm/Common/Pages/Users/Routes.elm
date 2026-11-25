@@ -13,7 +13,7 @@ import Common.Data.UuidOrCurrent as UuidOrCurrent exposing (UuidOrCurrent)
 import Common.Pages.Users.Edit.Routes as UserEditRoute exposing (UserEditRoute)
 import Flip exposing (flip)
 import List.Extensions as List
-import Url.Parser exposing ((</>), Parser, map, s)
+import Url.Parser exposing ((</>), (<?>), Parser, map, s)
 import Url.Parser.Extensions exposing (uuid)
 import Url.Parser.Query as Query
 import Uuid
@@ -57,6 +57,8 @@ parsers appState wrapRoute =
     in
     [ map (wrapRoute << flip EditRoute UserEditRoute.Profile) (s moduleRoot </> s "edit" </> UuidOrCurrent.parser)
     , map (wrapRoute << flip EditRoute UserEditRoute.SubmissionSettings) (s moduleRoot </> s "edit" </> UuidOrCurrent.parser </> s "submission-settings")
+    , map (\uuidOrCurrent code state error -> wrapRoute (EditRoute uuidOrCurrent (UserEditRoute.SubmissionAccounts code state error)))
+        (s moduleRoot </> s "edit" </> UuidOrCurrent.parser </> s "submission-accounts" <?> Query.string "code" <?> Query.string "state" <?> Query.string "error")
     , map wrappedPluginRoute (s moduleRoot </> s "edit" </> UuidOrCurrent.parser </> s "plugins" </> uuid)
     ]
         ++ userRoutes
@@ -97,6 +99,9 @@ toUrl route =
 
                 UserEditRoute.SubmissionSettings ->
                     editBase ++ [ "submission-settings" ]
+
+                UserEditRoute.SubmissionAccounts _ _ _ ->
+                    editBase ++ [ "submission-accounts" ]
 
                 UserEditRoute.PluginSettings pluginUuid ->
                     editBase ++ [ "plugins", Uuid.toString pluginUuid ]
@@ -140,6 +145,9 @@ isAllowed route appState =
 
                 UserEditRoute.SubmissionSettings ->
                     Feature.userEditSubmissionSettings appState uuidOrCurrent
+
+                UserEditRoute.SubmissionAccounts _ _ _ ->
+                    Feature.userEditSubmissionAccounts appState uuidOrCurrent
 
                 UserEditRoute.PluginSettings _ ->
                     Feature.userEditPlugins appState uuidOrCurrent

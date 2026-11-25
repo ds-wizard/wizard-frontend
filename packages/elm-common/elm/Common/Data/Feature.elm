@@ -4,7 +4,6 @@ module Common.Data.Feature exposing
     , dev
     , documentDelete
     , documentDownload
-    , documentSubmit
     , documentTemplateEditorsCreate
     , documentTemplateEditorsDelete
     , documentTemplateEditorsEdit
@@ -60,7 +59,7 @@ module Common.Data.Feature exposing
     , projectCreateFromTemplate
     , projectCreateMigration
     , projectDelete
-    , projectDocumentSubmit
+    , projectSubmit
     , projectDocumentsView
     , projectFiles
     , projectMetrics
@@ -88,6 +87,7 @@ module Common.Data.Feature exposing
     , userEditLanguage
     , userEditPlugins
     , userEditSubmissionSettings
+    , userEditSubmissionAccounts
     , userEditTours
     , userGroupEdit
     , userGroupsCreate
@@ -458,10 +458,12 @@ projectDocumentsView =
     True
 
 
-projectDocumentSubmit : AppStateLike a -> ProjectLike q -> Document -> Bool
-projectDocumentSubmit appState project document =
-    (document.state == DoneDocumentState)
-        && appState.config.submission.enabled
+{-| Submitting the project with one of the submissions the administrator
+defined: an editor who is signed in, when submission is enabled.
+-}
+projectSubmit : AppStateLike a -> ProjectLike q -> Bool
+projectSubmit appState project =
+    appState.config.submission.enabled
         && Session.exists appState.session
         && ProjectUtils.isEditor appState project
 
@@ -557,13 +559,6 @@ documentDelete appState document =
 documentDownload : Document -> Bool
 documentDownload document =
     document.state == DoneDocumentState
-
-
-documentSubmit : AppStateLike a -> Document -> Bool
-documentSubmit appState document =
-    (document.state == DoneDocumentState)
-        && appState.config.submission.enabled
-        && hasPerm RolePermission.projectsEdit appState
 
 
 
@@ -693,6 +688,15 @@ userEditActiveSessions appState uuidOrCurrent =
 userEditSubmissionSettings : AppStateLike a -> UuidOrCurrent -> Bool
 userEditSubmissionSettings appState uuidOrCurrent =
     appState.config.submission.enabled && (UuidOrCurrent.isCurrent uuidOrCurrent || UuidOrCurrent.matchUuid uuidOrCurrent (Maybe.unwrap Uuid.nil .uuid appState.config.user))
+
+
+{-| The connections of the user's own accounts to the services the submissions
+send to with OAuth (Zenodo, HTTP services with OAuth). Which services need one
+is known only to the server, so it is there whenever submission is.
+-}
+userEditSubmissionAccounts : AppStateLike a -> UuidOrCurrent -> Bool
+userEditSubmissionAccounts =
+    userEditSubmissionSettings
 
 
 userEditPlugins : AppStateLike a -> UuidOrCurrent -> Bool
