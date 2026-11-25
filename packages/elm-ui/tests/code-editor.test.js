@@ -20,7 +20,7 @@ const source = fs
     .split('\n')
     .filter((line) => !/^\s*(\/\/|\*|\/\*)/.test(line))
     .join('\n')
-const { LANGUAGES, CONTENT_TYPES, languageForContentType, highlightStyle } = require('../js/code-editor')
+const { LANGUAGES, CONTENT_TYPES, languageForContentType, highlightStyle, registerLanguage, languageFor } = require('../js/code-editor')
 
 // Not a stylistic objection: any of these would put Tab back on the editor.
 assert.ok(!/indentWithTab/.test(source), 'Tab must not indent — it is the way out of the editor')
@@ -55,6 +55,16 @@ assert.ok(/new Compartment\(\)/.test(source), 'wrapping must live in a compartme
 assert.ok(/reconfigure\(this\._wrapExtension\(\)\)/.test(source), 'changing wrap must reconfigure, not rebuild')
 assert.ok(/'wrap'/.test(source), 'wrap must be an observed attribute')
 assert.ok(/getAttribute\('wrap'\) === 'off' \? \[\] : EditorView\.lineWrapping/.test(source), 'wrapping is on unless it is turned off')
+
+// An application adds a language of its own without the component depending
+// on it: a registered name is built by what was registered, and takes the
+// place of a built-in one.
+const marker = { registered: true }
+assert.strictEqual(languageFor('nope'), null, 'an unknown language is plain text')
+registerLanguage('nope', () => marker)
+assert.strictEqual(languageFor('nope'), marker, 'a registered language is built by what was registered')
+registerLanguage('json', () => marker)
+assert.strictEqual(languageFor('json'), marker, 'a registered name takes the place of a built-in one')
 
 // Colors come from roles, so the highlight style hands out class names and
 // never a hex — that is what lets dark mode happen in the stylesheet.

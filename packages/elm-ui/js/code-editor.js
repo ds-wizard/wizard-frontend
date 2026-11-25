@@ -60,8 +60,18 @@ const CONTENT_TYPES = {
     'text/x-python': 'python'
 }
 
+// Languages an application adds of its own, by name, each a function to its
+// extensions. Registered before the application starts; a registered name takes
+// the place of a built-in one. The editor of a language only one application
+// has needs no dependency here.
+const REGISTERED = {}
+
+function registerLanguage(name, build) {
+    REGISTERED[name] = build
+}
+
 function languageFor(name) {
-    const language = LANGUAGES[name]
+    const language = REGISTERED[name] || LANGUAGES[name]
     return language ? language() : null
 }
 
@@ -217,4 +227,4 @@ if (typeof customElements !== 'undefined' && typeof HTMLElement !== 'undefined')
     define()
 }
 
-module.exports = { LANGUAGES, CONTENT_TYPES, languageForContentType, highlightStyle }
+module.exports = { LANGUAGES, CONTENT_TYPES, languageForContentType, highlightStyle, registerLanguage, languageFor }
